@@ -1,0 +1,1132 @@
+/* ============================================================
+   Nami Time — Liquid Glass（参考 Apple WWDC25 Liquid Glass）
+   ① 透镜受光 ② 高光边缘(specular) ③ 边缘色散 ④ 椭圆玻璃滑块
+   ⑤ 玻璃通透度 --k（0 = 最透 ↔ 1 = 最清楚），全部由 CSS 渐变自绘
+   背景模糊交给 DWM 亚克力；窗口圆角必须与 DWM 裁切圆角一致(=8px)
+   ============================================================ */
+
+:root{
+  color-scheme: light;
+  --k: .55;                 /* 玻璃通透度，由设置滑块写入 0..1 */
+
+  /* 同心圆角：窗口必须 = DWM 的窗口圆角，否则角上会露出亚克力 */
+  --r-window: 8px;
+  --r-panel: 13px;
+  --r-card: 13px;
+
+  --spring: cubic-bezier(.32,1.42,.44,1);
+
+  /* 列表图标尺寸：由「显示设置 → 图标大小」滑块写入（28..60px），
+     行高 / 分隔线缩进 / 圆角都跟着它一起缩放，所以任何档位都协调 */
+  --ico: 48px;
+
+  /* —— 材料：全部由 --k 线性驱动（更清楚 = 更白、更实） —— */
+  --app-tint:  rgb(255 255 255 / calc(.07 + var(--k) * .46));
+  --glass:     rgb(255 255 255 / calc(.05 + var(--k) * .13));
+  --glass-2:   rgb(255 255 255 / calc(.10 + var(--k) * .21));
+  --glass-hi:  rgb(255 255 255 / calc(.20 + var(--k) * .38));
+  --card:      rgb(255 255 255 / calc(.12 + var(--k) * .40));
+  --card-soft: rgb(255 255 255 / calc(.08 + var(--k) * .26));
+  --sheet-bg:  rgb(255 255 255 / calc(.52 + var(--k) * .34));
+  --lens-a:    rgb(255 255 255 / calc(.12 + var(--k) * .28));
+  --lens-b:    rgb(255 255 255 / calc(.05 + var(--k) * .17));
+  --hover:     rgb(255 255 255 / calc(.12 + var(--k) * .26));
+  --track:     rgb(104 118 142 / .20);
+  --hair:      rgb(46 58 80 / .13);
+  /* M7（主人 2 号）主题换肤：蓝紫 → 「忧郁高级感」的钢青蓝。
+     原来的 --fill 是 #5856D6 那个偏紫的蓝，配浅玻璃显旧；现在换成去饱和的深钢蓝，
+     深色档再提亮一档，保证两种主题下柱子都读得清。 */
+  --fill:      rgb(52 92 152 / .68);
+  --tip-bg:    rgb(250 252 255 / .95);   /* M5.6 自绘提示层：要压在任意内容上，所以给不透明底 */
+  --accent:    #2E6BA8;
+
+  --text:  rgb(15 19 28 / .94);
+  --text2: rgb(50 58 76 / .62);
+  --text3: rgb(50 58 76 / .38);
+
+  /* 高光边缘：光从左上打来 */
+  --rim-a: rgb(255 255 255 / .92);
+  --rim-b: rgb(255 255 255 / .24);
+  --rim-c: rgb(255 255 255 / .58);
+  /* 窗底冷暖两束：暖的那一束也改成深板岩蓝，整窗才是统一的忧郁蓝调，不再有橙味 */
+  --disp-warm: rgb(74 96 138 / .32);
+  --disp-cool: rgb(92 142 206 / .34);
+
+  /* 玻璃「厚度」：只画内阴影。外投影会被窗口矩形裁掉，所以不画 */
+  --shadow:
+    inset 0 1px 0 rgb(255 255 255 / .70),
+    inset 0 -1px 0 rgb(255 255 255 / .14),
+    inset 0 0 26px 4px rgb(255 255 255 / .12),
+    inset 0 18px 34px -24px rgb(255 255 255 / .80),
+    inset 0 -28px 46px -30px rgb(0 0 0 / .20);
+}
+
+html[data-theme="dark"]{
+  color-scheme: dark;
+  --app-tint:  rgb(12 12 16 / calc(.20 + var(--k) * .40));
+  --glass:     rgb(255 255 255 / calc(.03 + var(--k) * .09));
+  --glass-2:   rgb(255 255 255 / calc(.05 + var(--k) * .13));
+  --glass-hi:  rgb(255 255 255 / calc(.10 + var(--k) * .20));
+  --card:      rgb(22 22 28 / calc(.18 + var(--k) * .34));
+  --card-soft: rgb(255 255 255 / calc(.04 + var(--k) * .10));
+  --sheet-bg:  rgb(24 24 30 / calc(.60 + var(--k) * .30));
+  --lens-a:    rgb(255 255 255 / calc(.04 + var(--k) * .12));
+  --lens-b:    rgb(255 255 255 / calc(.02 + var(--k) * .07));
+  --hover:     rgb(255 255 255 / calc(.04 + var(--k) * .10));
+  --track:     rgb(198 212 236 / .15);
+  --hair:      rgb(206 218 240 / .11);
+  --fill:      rgb(94 142 202 / .62);
+  --tip-bg:    rgb(30 30 36 / .95);
+  --accent:    #4E8FCB;                  /* M7 换肤：深色档的蓝要提亮一档，否则压在深玻璃上发灰 */
+
+  --text:  rgb(255 255 255 / .94);
+  --text2: rgb(228 236 248 / .62);
+  --text3: rgb(228 236 248 / .36);
+
+  --rim-a: rgb(255 255 255 / .34);
+  --rim-b: rgb(255 255 255 / .07);
+  --rim-c: rgb(255 255 255 / .18);
+  --disp-warm: rgb(58 86 134 / .26);
+  --disp-cool: rgb(84 134 198 / .26);
+
+  --shadow:
+    inset 0 1px 0 rgb(255 255 255 / .22),
+    inset 0 -1px 0 rgb(255 255 255 / .05),
+    inset 0 0 26px 4px rgb(255 255 255 / .05),
+    inset 0 18px 34px -24px rgb(255 255 255 / .14),
+    inset 0 -28px 46px -30px rgb(0 0 0 / .50);
+}
+
+#lgDefs{position:absolute;width:0;height:0;overflow:hidden}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:transparent;overflow:hidden}
+body{
+  font-family:-apple-system,"SF Pro Text","SF Pro Display","PingFang SC","Microsoft YaHei UI",Inter,system-ui,sans-serif;
+  color:var(--text);-webkit-font-smoothing:antialiased;user-select:none;
+}
+
+/* ---------------- 窗口外壳 ---------------- */
+.app{
+  position:relative;height:100vh;display:flex;flex-direction:column;
+  background:var(--app-tint);
+  /* 透镜内部受光：左上强光 + 右下反射 + 纵向明暗（自绘，无 filter、无额外图层） */
+  background-image:
+    radial-gradient(118% 88% at 1% 0%, var(--lens-a), rgb(255 255 255 / 0) 46%),
+    radial-gradient(112% 96% at 100% 100%, var(--lens-b), rgb(255 255 255 / 0) 44%),
+    linear-gradient(180deg,rgb(255 255 255 / .05),rgb(255 255 255 / 0) 46%,rgb(0 0 0 / .045));
+  border-radius:var(--r-window);   /* 与 DWM 窗口圆角一致 => 无外圈、四角同心 */
+  box-shadow:var(--shadow);
+  overflow:hidden;isolation:isolate;
+}
+/* ① 高光边缘：梯度描边，用 mask-composite 挖空中心 */
+.app::before,.rail::before,.card-shell::before,.segmented::before,.sheet::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(158deg,var(--rim-a) 0%,var(--rim-b) 34%,var(--rim-b) 66%,var(--rim-c) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  pointer-events:none;z-index:3;
+}
+/* ③ 边缘色散：暖冷分离的细描边（刻意压低，避免变成一圈彩色描边） */
+.app::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(158deg,var(--disp-warm) 0%,transparent 42%,transparent 58%,var(--disp-cool) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  pointer-events:none;z-index:4;opacity:.55;
+}
+/* 顶部镜面反光：贴着上沿的一条高光 */
+.titlebar::after{
+  content:"";position:absolute;left:56px;right:56px;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgb(255 255 255 / .55) 22%,rgb(255 255 255 / .72) 50%,rgb(255 255 255 / .55) 78%,transparent);
+  opacity:.75;
+}
+
+/* ④ 中间那层光斑（原来叫 .caustics，第 29 轮试过做成静态噪点 .grain）—— 整层停用。
+   原因：那三团径向渐变（白 / 蓝 / 暖橙）压在浅色玻璃上会混出发脏的灰；而整窗 overlay 混合
+   对合成器也不是白给的。现在背景只留 .app 自己的冷色渐变 —— 最干净、也最省。
+   元素仍留在 index.html 里，将来想加回颗粒只改这一行的 display 即可。 */
+.caustics,.grain{display:none}
+
+/* ---------------- 标题栏 ---------------- */
+.titlebar{
+  position:relative;z-index:5;height:48px;flex:0 0 48px;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 12px 0 24px;
+}
+/* 拖动区：从顶部下移 5px，把最上沿让给缩放手柄（所以顶边也能拉伸窗口） */
+.tb-drag{position:absolute;left:0;right:0;top:5px;bottom:0;-webkit-app-region:drag;z-index:0}
+.tb-brand{display:flex;align-items:center;gap:9px;position:relative;z-index:1}
+/* 第 34 轮（主人）：标题栏 logo 换成机械时钟（内联 PNG 7581 B） */
+.tb-dot{
+  width:15px;height:15px;border-radius:0;
+  background:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAdZElEQVR4nOV7aYxd53nec5a7ztzZN87C4SpyKHGVRJmSaNESRcmxrViV6a2FjTptfzRtg7RoihRFJbVAW6NAgDYpihRJnDiBIVeKlNiW5EULTVkiLcqkuHO4DMnh7Pvc/Z61eN7vO/feGVF0XLQ/2hzyzLln/97teZfvPcDf8sW407lnn33WOnDguV/tiQfwf3858itceuQ5PP/88z6A8G980+HDhy3DMPH/y0JaSNNtz2HV8uyzz5rPP/98AKDrX/zb//zp/Y8/NdTZNRDnpSZCwzQNmCZgGuqIadfuJctMnuSDNf94Xf2ygq2reRys2CCok1kY1I4jCOBxJ1BiDfRJOaS2If/Pz4w7R15/5dLv/YffeQ3ATB1tt2fA4cOHrRdffNHfds/uv/+1f/bv/tOO+w90mVYcgR/CMADLsmAJAwxYpgmLjDAVsXyQMCZaySBDnxdmRdJQa8gDmsDonOzK0IGQ26D2m4TJMf7W+36gtz63gT4ewudvnjAA33Nw4YOfzv7Zf3vud8+f+cUfRzR+hAGHDx+2XnrpL/1N23Z87Z/+m//+Z+u27sHC3JQXhj4Mg7ImA0yYmgmWZcA0uLWEIfyttEOvPEcGWKbcL2vdG6sv1oxQxCuOKKJDhKEhWxIVIETIbbRPQv0Avt5Gx0m87/O3ZgIMtLZ326OXT+MP/v0//sbli6e/9YUvPFNlghENgy8yDKPjX33zz6/se/xwZmZqNLRt24qkJ1InA0TyZlULbDlW0wpuecyImCIS1wzggyJGCKEkVe2pv7V9jofEKUZgJeFCnPrt+b4mWBOvGeD7vjCAT3Rdx+/qXmsc/8lLhW/+7tc3maY5EwSBsF6s8JFnn7UMwwif+spvfnbnviea5+emAsM0LdoWXxzCkFUNzhDiDBKrCSVjbNuCZdcYQg0RLbHM6m+uNlfbQEPKRlM6jqZ0DJl0DLZt6ufUro+O1d+vVr5bjYMCUePRthWtpilj5vhNK2aRph0PPpH59a/85lNkDGlGBEPPaVf3wMFntpmxROgHnnqICIwPV6pMcYq0OVA9MBIeDTQWs2DHNBGmPkam6Gtiehu3TdyYzuP8zQWcGZnD8Og84rYmuMq86B3KhOr3eR1/y2rXmC/XasGocWqhGQoorXg8fODxZ7bV02zXg+CatZvsIPRpeJrw+gdG0tDE1Q1CHaMJKFXnNp2wBJS8IFSmofWeDFkuODh6bgae64kKB76HnrYGtDan4Xo+dUzUnvem4wpzCmVPztmGIaahTCqAQU02AoReKOOgvorTD015v2kpgKR5BYFvdPcPCs1HdDBhqh21UPK0uQi2hXhNWI3bSqr1q6i1ZkZD0pb1+nQRuZKHTCpWxQ8OmtdPL5YQBgGSMQOpmInADzAxl0PCjoBVuRWayMRsDsfPjcE2gZbGZJ3GqeuUWSktoMQpKDE7PW4xEcNAaNAcIAyvX2y1USzwPF84qLhLqdWAL1L72EdUkBKCSDkeM7GY93B+NIvJhSKStoEn71uDtqYkyo6PZNxCQ9LA+FxBQIoj4pbANTqdxf5daxDAgusGaEzFMD2fx/d+dhX5YgVnrk5jz13d2LahC6ZtwfAUaCpL1d6Bdi+WHQKWglhxjdRoAqpowQr6sSIUUYqiMDkCt2itqvsq1bflOkuIy5d8HL0wj7nlMhKWgVLFw+snxlEoVdCYNFEsOzg3soTx2bw4eZcm4PnCwJtTWbx/bhpLy0U0JEzk8mX8z7eGUXFcMadsvoLvv3MZU7NZpJO2SLtqflUtiEBYBWTKY9VMUzRhJf1YgQGRY1Z2vNLVEbkjEFMM0KahgYvXphIW4ibgeCG8wJc4IFdw8NfvjqKBEl0soVxxGVFqt0aXFYjZVRwfrxy9ikTMRE97AwolF9l8STTOcTwxmbZMEj0dGZFqzLLgGxSZqQIkS8cOpoGQHBUPpgA1CEkLteWj4b1dn8FE9iKRXV1QoyStCBWJi0PQzNHnybhMykYmZWGiWIFFMAoC2BYE9GaWlN2TaJFD4MNxPQKTaJCEsEGAYtnHyMSyeAo+2/M8CZCoCb0dLWjJJFF2CawK4en/+dPWhAszdBxBBgSBIt6MXKUO1W+rAaa4DkZ2CulXupo6/2yZSCdsIZzSINO4NCRNdDcncHM6B0MkEogZUM2b0jbWdmfQ19GAga40jp0ew2vvDAtTfu2TW/DQ7rUYGc/i+vgyRsaXsJAtC6bELKW21JR1a5qRaTBRWqSbVgJrTNniFbJkOiNHkbhiRmT/ogFWUItG72QCpg5flfTrXVxkX4r46SVHqWtrUgZKSU/Ml3F1Mo+YSbSlNF10ZGK4d0sPhgZbxAy4pBLA1fEWtLS1iYQ72pqwYU0j1rQ3Yt+OXizlKjh9eRo/OzWGueWSvC+VjOPk5WlsGmjDlnXtcDygVPExMr6AbL6MofVdyJddWHR/Js1LRZ4R0aahI1iJDWpab6/UgLogQoNHzZ2ohxGQ5nMujg0vwjRCZJIW1nenxfX97Pyc2DglTnR/+O4OPLSjRzRjdsmTpIqMiVsWEvEYUqkUXNeV31RdEkSmNqbieGzvWjy0ow+vvjuCoydvCeYUSh6+/do5PLV/M/JlD2evzWJ6IY9y2RWT2bSuC0u5sgiNWkGCyQyfLpgRIelblYLaES+e1yksNaDeh1YzP8tEImYJwJ28tkzrE9ucz3qY0n6dzCVBcRt4Zv8gtqxtwvSihyNnFzEyVcCeDU3Yt7VF7JagRxdKi10quEJ8JmliseDj1RPTkvh8cnsHDh/cjA19LXjhRxfgeIGM6aW3h8UEOEaCJJn2+ruX8XebU0in0yiVnSp20QQs5g1VTLsDBnCRzE9HczVGqGNE+XM3s1jIVZCKGXCZlIcBbCNAYCh7T8cNfPXgBnS1puB7IS6N5XHuxjLScRPHLs3j5kwR+ZKHxWwJqWQMQWDh7I0cbs0zGkxgPudhOV+R4Oj7x8fx9x4bxL1DnWhu3I0//f4Z5IoOUnGrmiDRlRIA55eLOHnhFg49tA2lihq3AsgoGNIYoOmPhG6ibrGNuli8zodGkR4JHurPoCNji30zhHU9BXJlx4OFAIcPrBPiS2Vf7uttjcsAJWgJQ1wZz0qcQMbR/on8BDqGuuduZIUxcR2+9rQm0Jy2kS/42NTfhKcf24GmxgbtPWoeJV9y0NfZiP33bkTZ9SXajLRXNEEA8/YaYK7YiW5iFFgHhBEecEkkbBzY0YVknAxhHE9f7qNcdvDk3j6sW8MBBqKWdG2jc2Uhnn6dxx4easNvHFqLDe0Ghi9dxfDFy9jQFuIfPjmIQ7u70NoYR67o6ThBlQhScRMfjhRRChL41H2DIggiPM2EYyAufeXJnWhsTMuxSIOrRJMWrdmrIwF7JQNwm8KGOhZlZJ4XoLUpgU9u75QAh9JiqLpjQyt23dWOG1MViQWopm+eWcD5m1nxybs3NOPBbe1oZK4QB06lE0gmk3KuMR3HmpYYmlOt2LmhGccvzuPnl+YxPJ7HG6dm0duRQckxsHNtDM0NPbh8YxqnhqfQkIzBrQT48qF70N/TjIWsq+1eqbt4MSMEo+YoEiQtH8sA6PBR0ukVaqNcigQZukCykK2I5N0QAnoH7+vD+LyLvzo+g3RCRYpLeQeWEeCxXZ3YtaEJjhtKTkAwZVyRTCV1gmSLRCtUX8vEwd2d6G5N4tjFeSwWApS8IrqabRw9m8XuTa146pHNuDAyp2uGBmYXi1ExSUWDOkcQYsXua3SsVgGzfkdsRaNrVY30lhKlqjGg4dvOXV+Q6/NFB9vXt6GtOYG3T89KZEc8yBYcsdFHd3QI+pcqKguhvccMMs1CIpFAMpFAPGbJMZ7jswmeA50NWNvTKsyeWsjh3fMzOHl1EW99OI2+zjTuHVqDEt1f3MaJC+PwPR+tTSyuxMWNEsOqdUpdjVol/NtoAOu8krsrdYn2+YsFjGLZEwnOL5ewlK9I+kRPtnNzh9zd3RzHzCLjd0s8ws71TdizsQnFSoCYDqEZ1vGlZEAymRB1khyDgzF53MSteRcnRgrYvCYN+A4uj5XQkLSQsIHR6RwWsh727ejDz89NiHByRRfffvU0etobJWBi4DTQ06LG7qtAqLr+MjcIqQPUbIVRHol6/f0xkThDUlJhmyFKFRfdLUn0djSg4oQ4tKdDCL88kUdjwsQntrTClbhdEcc1Wlg9SjEkDENRey4NcQOXphycvVXGUH8Km7rj6Mi04tzNZVQqLgwjxOce6EVT2kI8lkFfV0bqBRzjxRtzOHdtRqRcqTj42md2Y8NgDyquV1cp+ygImqsgQA5E1VtuyeHFbFmSl5gZymqCLsyXLK2/swHJhHKRRGAGNxU3wJb+DNozManqRAmUMEKrYTJGE4ghkYgjQSQFcHrMxfCUi70b09jSExfNacvYuKu3URIqmsXOjS1iTsSZ9f1tEvFRq/g8egvGJ3zP7GJOpcHU4vqi7C9jAPRFUTWXN0/OU/0d8dv0+ww+At8XwGHqSgAiPpTcEKMzBanvMTxmdVaVJuma1O/ohUXPRFNTM1pamuEjhrOTAaayIfZvTmJtm4o4OWAGM+t7GiQOmcs6ki0yTqEi9ndlVIbHzFOqw75gQalUwc3x+RVaLUz4KP1YZQK091oSQYa4foC717ehUHKkasMHUZV9gd0QzY0JGeytmRIujuaQL7loSFjo7UhLDYG2HrMAlQap5d0reVxbMLBvW5e41dHFCnJeBYeGUnItjawhYcBmJmwAfR1pNDXEkS24uDCaw9a1zRLRtWaSiNs2OHfBzLPieHAqDjavbcMDO9dJjEAt4PyCKhQrmj6eAQH9Z+QzFdc8P0R/V7OkotfGFvDumQnMLhX11Jiq2528msVbp6aEMfTDuVwRf/jSCaTSKVVGi7FiFEMyEUM8HsdCJYZHt7eip9HEh2M+2jLAxMwCXlpekkE7jiu2yxoAC6elcgV+mJbn/OiDSRw9O4PH710jiM9x0Nswyepua8DBB3Zg66Y++IGJfKkiGhLqKRDlKu8EgmZUD1UXyzQFQUWqtyZ2b+mE7wV48e3LkhfIA2wLy/mCqF4qxUpwKAO+cH0SyYY0bGZ+yQQaUkmkGxJIJZPYNNCBwRYT5yc8dDSaaOyI4+JogBvTRTGzQrGMcrkiYFYpV+BUKti4cRAJ24ZpBJiczWF8tgn3rGtRGm4YIv1H79+AfXsGMTnnwPM9pfKaEKWvIuWPZ0BQnX+rzcgoPFBTVIWSLpjquJ4X0ETam+h6TJQrnmhAPBbDlnUdSCbjUu0h2KUScaRTcRimJfH+eLYZuwZsAcWf33TgOg7WdyUFXEtlCxUnLjE/tYGrFY9JhalYchAGDH9NuHrOUoIdHfnli6rUpup/qjAqf1kYvc0Mub1KAXQkFVV5FCP4YqpvMs6c3FUP1jU91vx2b2oR1L94Y0lUNJWI4Td+/X60NMTlOvpvAj2DHT78xeNT+OHJGeze2IKyE+DEpRls70vhM/f1wGWdMDTg+IDj801MkV185+1R5AplPLC1E1sHW9Ddnsa1seWqkBj4ZIuujLEcj0mypumuTsJKlfiXVoXDmhZI6S4IkYjbUq39zo8v4scnbiCu82xKfylXkpCUtj402CzzAASr8dmiAI5MXuqZXAFOA3h6bzfakx7e/MUY3jk9hk2dFj59b7eaC5T5CbV6vvJGM4tlAVem1A9u7xHPQ0BbXC6J7QuT4zZef+8K/uSVX2BuIYtUguG1FqCUxaKS+EoOmCtBMLKVaCAhkgkbZ4Yn8Uff+xDnrs7A0POFkVGNTmXF1spuIOXqrtak3HfmupIOmcN9lg680IAbhBLtre9KoVgqo1ypoK89pQBXmKW3MmgljAujWQFEeoNkguV3TuAA47M5QX+u1Ea62Q+Hx/H73zmKYyevIBlX9cLq5KpcdwcN8LRq8w4GNaSRAyuUXbFHVYhQtsSHMXa/PplFrqhS0nPXl3FjKo/GpIXL48sYvpXVtqqZ4HO6S72LEiVYlksVeb68P4QwyOfWY+3QlIzw6kQOxNyJhRJmlhzFhIKH6xNLoiF0pWKSvi8zTUzN88WymDE1OJpil36DOzEAEQBWzYb5doCB7iZhCpMcqhwDHF7HgGRmsYAbk8tS0vrB8TFhjIoVDLz+wQQWcq6EqhUvFOJo2/RKdHdE+mK5Ir/5Pp4jk1jw5D1zyy7e/JDlMfYoAPNLRbz41mX5TeJnFvJqjsH3RUPIUM4lOATUvnYx0Wp/QdRBgjswINRTSVUM4KC8AG1NKazryaClMS4FCxZApQGD6BuGeO/0ONJJC+u6G6QSxKoMbycWvHDkJuazFXGb1AQywgnVcytlR1wdCyiVUJ8LIMUWFl5fOTYhRU4i/1K2iGy2gLZMTFLtY2duCWNUBOihLROXqlB/ZyO2b+xCZ3uzuEZFk9YC3UhxRzfo68otMzrVmhJIAPKlJ3aqbEomIUL86Q/OyBQXwebq2ALOXl3Aob39cs/G3gyaUipomVwo4dtvXMfB3T24Z5ARHDuNqAEBHFepvkhKp8gUwOmRZbx9ZlaIT9ghnnhwQMpo18YW8dmHNuLUxRlcG5uXvCRbVOWwf/KV/XADVqFUtYglNtYXIk+gMICdJrgTA4JaJ4bu0LBDMoTorbI2Sj2VtvHQjn688MZF4TBrcK+9dw3/6PM78cVH14kaJ2NAOhnDyz+7Jebxyntjks+TCUODGXl2lE+QGUxxGeaev7mMmzMFGIEvk6uf378OG/ozqDjAgfv6sbBUxg/eGa4mZL7nYf+eDYgl4shlWYNQZTIKMaIj6iYRHNAgdOTjNCDQhPMBUgJjjc1UoOgbIRj/ZYs+tq7vQkfLDang0gXlChX89Tsj+NLjd0nTUtkB2luSiNmM0kKZCh+ZzEpR9MjZhMToAwN9woCLkw7OT4xggTV9qGtLrof2pjT6uzNYyKqYngnViz+5gGyhBNsgJrnobE1j+139yBbUFJq0xawSYlX6urnqIxhwJGJAqPtr5CYVA1RXbUdkDBH/vbNjUhaj/+f1BK3rE4t47b2bYqNMkW/NFDE1X5A5g3yhgvbGOPraUlJYYUClJmIsqR4RvLqbYlITYI2R9n1rOoup+SJSSUuIf+mNixgZXxTv47q+eIC5pSKOnLgipkhTUtNhdT1F1QYqeqIA3io3YNfvyAV1nVc+59kCpp4BTOkpCiQBuTQyizfevy7+XKJG+nrO+MRsXBiZFRX89CcG0d/VgL1Dnfjg4jQGezL4woENIkna86vHxkTiZGpTysZTD6u5hFzJxV/88BIWlkt44J416OSxfBkvv3UZV0dnZQ6C6TiBjybEEXzvzdNoa05jy6YBYaSaaI26x9TYSIMhkeUdc4FAR25K0rZvwrdCmGxJ4b5tCxq/cuSS2H0ULvOvSIRNEnETV24tiHY8du8Annp4APdt7RQzsWxL7H1dbyMGexoxvViUJGrdhlZs7M9gIeejqTGJrz4xJAT0dafwwflZ/OjYNSwuF2CB7k5lh8w8WX/k/dSOv/ir9/Db33gC8WQaFZfJEJspFR3EMCZxZqy+QeLI7TRAE+8G8Gj/xAEvancL4bg+UvGYSPPi9Xk0pmMCcORud1sa2SLdjiFVX4bIf/nTqzh1pQl7h7qRSSckbuC0MXEoZYdYXmT66yEV65Dgh8VRVnNYY7g5uYwfvHQFV2/Nqzgg8FF0HCGYmnJzYkFsno0ZzB53DfUjnU6hWOGkCeOJuj7CqIlSm8Ud3WAgIKIQNGJIZAJUIdcCfu3hLVhc/hC3ZrIYXNOMfdsHsPOuLpy6NI0fnxiVLM3idDRCXLoxh+Ebc+hqbcD63ib0djSKabBrpJBflkEWSxXMLZYxOpUTu786tojJuRxCX3WPeJ6r1N5z8YWD2/HArnU4cWYUbx67iAtXJzDY24ovffZBuIGarosIj3BMufOoifK2JnCkCoI1tORDlBZIH56eW6MK2qk4PvvIVmlX2bW1F/F4TLK6T+zsFxV++adXdCKlXkaej88u48bkomRtlBqftaa3W7zLySvzeP/irKA6XZsUVqjiYQCnwoZHX9Llbzy9F3vuGRBT2b1jI7ZtGcD7p66gt7sNsOMo5kpCOAUgTKhqQJ07/GX1gEDbjSmqr5CWmZdPN8Tjhur1acqk0d3RJAVQx3OEoEKF6B+TvIHaLgzQLoiDYPnbBENgV+catfZXskm1pQZyXlWcFCE8x6CJtYViJRQmURC87/7dW1GsuCgUylUgj7BMhe16n2MXyd7GDUYLz6kbIiBUK90LVSvaki4WP7IFzg6pdlQJmkwD18cXpSjJAIUqW3EcCVp629NybDnHWN2FL1KlartynCHxwlJeanq9bSlBd8b3RHp13sXwyJQwmmOSNNcPBWs4QaKyzvqxayaIZ6u58dVxgL1iT+y/VhHiTWICMqNU6/uVZF3zjn0CBD7+oye4fHNWBh25IUrz8MFduO/uPkzO5jEzn8P3jw5jMVcWYKUGUKLNmQS++uR2dHc0o7+7CSfPj+MPX3xXAFXFswHOXxnD45/cUWuMjojUSC9C8iJXrk2AAq2PCu9UDwirAKhuqtqRuBRqAAerXkBtUK5G25mEtD66WlIwQk98N13mp+5fjz139yNbCtHSnMHenb24a7BDGBP1xJcqjkSWD983iPa2FiyXQuy+ZwCfe+RuLOeKyOWLggtr17TKXESN6NoaEc7x1WtxfRO1eIA7agAUYMlkgyQouorGKbuoUKoTClU3YOCqtIYBTgnAYw8OYfdQH47+4poM5NBDQ8gWVHdmyXMBw8bgGhYziQ8R/0Os623FYi6UUhYxZyEb4NGH7sH03DLKFQePP7wdHZ2t0iAhwqlnQj3x0fGqN1AmGtXG7tgnaOiiuXR+aRQnsSpnUxML1Wwy1C1pessWFNpX1qsg09SIv3Not6g3Z3Gi7lO+nTPEfd0tMm1NDSHSU837uttQdpTLkvb3MBRiP//kXunvY/q8lGXkWItYxdcHdQxYtda31asJpLqvNG7HAH+VeohHYJd1jfzqZyx6RqqaajInYLMipVcsuSjrNpVoal1YyOqNEyKVSuLpx7YLiFKTGF7zGN2gVKN0CksCmFRFmV30DUE9yIl5VqVfbwYM0KIPJ3SlC7zPux0DDsjfa5fO+Tv3PhxKQ6PqLdOxvvowQb7gsOuqRtKfywFFPXl6ap1zgWxSDA0VQFWnphUTqVHbt61XpWshNpDustonMbUylgihKsVasqaIV+Oqubs6e6+rASitFYmF14fPreiWtvnnyHOqd/69V//8wsah7QYnMxh8CPZTalBlLlF3+AgtXTAj4ZaqGShfH6zoLVLSr+vK0JMu/F92VCIUKWR0TX0qW0P7OjDTyU0Ur0R2ruoLdZ/O8Hi1xE3NtFDMZ433f/jdC4pmFfwZqz6Z6fzyP/+9K5966uuNS/OToW3FLGmbjVpkSEz1myHdMC0tdFEjZX2PcR0DZJa2ZgbVqWcllBUluCrQrvhEpoboclzbfjXO16oefTsUzVkony9q77d0rDHeevlPCt/9L/9ys2ma09EnM3YEaV/84hf5reDMmy/8wW/1rt38rS07P4FCdtET16jbaFkQUahvqEhO+u/4UlMalz1fd5hHzVXVSdao4UIzQH8aFP1cPRtVNa86oqsM0LEKpS3YoCvYETNUZKk+lqJpEUBb2nvsCx8cxU9e+P3fNgxz+plnPvrRlCzRJ2Vda+/6B5/7+u/8x+37DnYkkildCq/NGle/IWD1t66zNGpPVwTX/66pfrRUPUq9JuhSPJdaOUvnKBHDtUBqUR9jllr3ecTEyOrKpSLOHn9j/nvf+ua/nhu/9j8+9rO5aKn7uLD70Jd/6zN7H3t6qL2nP0GOc1Ets4pohlHsIo96cVVLXdRhUuvbX/GSyPXfrj6tJ2bkNENu/tPfD0ZprKpbKiaoUncgPUXRx5PRg03LxuzUWOX4Gy9feuu7//VVthrd7sPJj/90dvVE+v/DC2n5G386W7cYj1Q/nj7yK30t/X/6++kj/9tfUR+Qj6d/+qt+PI2/Rcv/Av4GH9k5TT2OAAAAAElFTkSuQmCC") center/contain no-repeat;
+  filter:drop-shadow(0 1px 1px rgb(22 55 95 / .30));
+}
+.tb-title{font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--text2)}
+.tb-actions{display:flex;gap:6px;-webkit-app-region:no-drag;position:relative;z-index:2}
+
+.glass-btn{
+  position:relative;width:28px;height:28px;border:0;border-radius:50%;
+  background:var(--glass-2);color:var(--text2);
+  font-size:13px;line-height:1;font-family:inherit;cursor:pointer;
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 1px 2px rgb(0 0 0 / .10);
+  transition:transform .18s var(--spring), background .18s, color .18s;
+}
+.glass-btn:hover{background:var(--glass-hi);color:var(--text);transform:translateY(-1px) scale(1.06)}
+.glass-btn:active{transform:scale(.94)}
+.glass-btn.on{background:var(--glass-hi);color:var(--text)}
+.glass-btn.danger:hover{background:rgb(255 90 80 / .30);color:#fff}
+
+/* ---------------- 布局 ---------------- */
+.layout{position:relative;z-index:2;flex:1;display:flex;min-height:0}
+
+.rail{
+  position:relative;width:214px;flex:0 0 214px;display:flex;flex-direction:column;
+  justify-content:flex-start;padding:14px 12px;margin:4px 0 12px 12px;
+  border-radius:var(--r-panel);background:var(--glass);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), inset 0 20px 38px -28px rgb(255 255 255 / .75);
+}
+.rail-nav{display:flex;flex-direction:column;gap:3px}
+.rail-item{
+  appearance:none;border:0;background:transparent;text-align:left;
+  height:38px;padding:0 14px;border-radius:999px;font-size:14px;font-family:inherit;
+  color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;
+  transition:background .18s var(--spring), transform .18s;
+}
+.rail-item:hover:not(.soon){background:var(--hover)}
+.rail-item.active{
+  background:var(--glass-hi);font-weight:600;
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 2px 8px rgb(0 0 0 / .10);
+}
+.rail-item.soon{color:var(--text3);cursor:default}
+
+/* 底部状态：与顶部同一套玻璃胶囊语言 */
+/* M8（主人 7 号）：热力图和下面那颗「正在记录」贴得太近，拉开一点呼吸 */
+.rail-foot{display:flex;flex-direction:column;gap:8px;padding-top:15px}
+.live{
+  position:relative;display:flex;align-items:center;gap:9px;
+  padding:9px 13px;border-radius:999px;background:var(--glass-2);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 2px 8px rgb(0 0 0 / .08);
+}
+.live-dot{
+  width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#34C759;
+  box-shadow:0 0 0 3px rgb(52 199 89 / .18), 0 0 8px rgb(52 199 89 / .55);
+}
+.live-text{font-size:12.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.main{
+  position:relative;flex:1;min-width:0;display:flex;flex-direction:column;
+  padding:4px 20px 12px 18px;gap:14px;
+}
+
+/* ---------------- M7 S7.3 首次运行引导条（一句话，只弹一次） ---------------- */
+.hello{
+  position:relative;align-self:stretch;display:flex;align-items:center;gap:10px;
+  padding:9px 12px;border-radius:var(--r-card);
+  background:var(--card);
+  box-shadow:inset 0 1px 0 var(--rim-a), 0 6px 18px rgb(0 0 0 / .10);
+  animation:helloIn .34s var(--spring) both;
+}
+.hello[hidden]{display:none}
+.hello-t{flex:1;min-width:0;font-size:12.8px;line-height:1.45;color:var(--text2)}
+.hello .mini{flex:0 0 auto}
+@keyframes helloIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+.glass-pill{
+  align-self:center;position:relative;display:flex;align-items:center;gap:4px;
+  padding:4px;border-radius:999px;background:var(--glass-2);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 4px 14px rgb(0 0 0 / .09);
+}
+.chev{
+  width:28px;height:28px;border:0;border-radius:50%;background:transparent;
+  color:var(--text2);font-size:15px;line-height:1;font-family:inherit;cursor:pointer;
+  transition:background .16s, transform .16s;
+}
+.chev:hover:not(:disabled){background:var(--hover);color:var(--text)}
+.chev:active:not(:disabled){transform:scale(.9)}
+.chev:disabled{opacity:.28;cursor:default}
+.datelabel{
+  border:0;background:transparent;font-family:inherit;font-size:16px;font-weight:600;
+  color:var(--text);cursor:pointer;padding:4px 14px;border-radius:999px;transition:background .16s;
+}
+.datelabel:hover{background:var(--hover)}
+.datelabel.on{background:var(--hover)}
+
+/* ---------------- 分段控件：椭圆玻璃滑块（静止不膨胀，按住才膨胀） ---------------- */
+/* 紧跟日期胶囊：主列的 14px 行距在这里收到 8px（主人圈出的空白带） */
+#seg{margin-top:-6px}
+.segmented{
+  position:relative;align-self:center;display:flex;padding:0;border-radius:999px;
+  background:var(--glass);
+  box-shadow:inset 0 1px 2px rgb(0 0 0 / .10), inset 0 0 0 .5px var(--hair);
+}
+.segmented button{
+  position:relative;z-index:2;border:0;background:transparent;font-family:inherit;
+  font-size:13px;height:38px;padding:0 17px;border-radius:999px;color:var(--text2);
+  cursor:pointer;transition:color .22s;touch-action:none;
+}
+.segmented button:hover{color:var(--text)}
+.segmented button.active{color:var(--text);font-weight:600}
+.segmented.small button{height:30px;padding:0 12px;font-size:12px}
+.segmented.small .seg-thumb{--thumb-edge:1px;--thumb-inset:2px}
+
+/* 玻璃滑块：形状与外框一致（都是 999px 的胶囊），像 iOS 分段控件里那颗嵌套的选中胶囊。
+   关键：**四周留白要匀匀**。只缩高不缩宽的话，第一颗会贴着条的左缘，
+   左端就会露出一块月牙形的空隙（主人圈出来的就是这个）。现在左右也留 --thumb-edge。
+   静止 = 比分段条矮 2px、左右各留 2px；按住 / 拖动（.dragging）时整体轻微放大 1.05。
+   尺寸由 JS 写 --tw/--th，所以「跟手位移」和「轻微放大」能用两条不同的时间曲线。 */
+.seg-thumb{
+  position:absolute;top:50%;left:0;width:var(--tw,0px);height:var(--th,0px);border-radius:999px;
+  --thumb-edge:1px;          /* 与条内缘的水平留白（同心嵌套时 == 垂直间隙） */
+  --thumb-inset:2px;         /* 比分段条矮多少（上下各 inset/2） */
+  transform:translate(var(--tx,0px),-50%);
+  transition:transform .36s var(--spring), width .3s var(--spring), height .3s var(--spring);
+  will-change:transform,width,height;pointer-events:none;z-index:1;
+  /* 浅灰玻璃：中间通透，靠近边缘转亮（厚度感），左上角一道镜面反光 */
+  background:
+    radial-gradient(128% 150% at 50% 46%,
+      rgb(255 255 255 / .16) 34%,
+      rgb(255 255 255 / .28) 66%,
+      rgb(255 255 255 / .50) 90%,
+      rgb(255 255 255 / .34) 100%),
+    radial-gradient(104% 132% at 34% 0%,
+      rgb(255 255 255 / .74) 0%,
+      rgb(255 255 255 / .18) 30%,
+      rgb(255 255 255 / 0) 56%);
+  box-shadow:
+    0 3px 12px rgb(0 0 0 / .13),
+    0 1px 2px rgb(0 0 0 / .08),
+    inset 0 1px 1px rgb(255 255 255 / .92),
+    inset 0 -2px 4px -1px rgb(255 255 255 / .40),
+    inset 0 0 0 .5px rgb(255 255 255 / .30);
+}
+/* 透镜边缘：高光 + 冷暖色散环 */
+.seg-thumb::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1.2px;
+  background:conic-gradient(from 214deg,
+    rgb(150 178 214 / .22), rgb(255 255 255 / 0) 18%,
+    rgb(255 255 255 / .90) 34%, rgb(255 255 255 / 0) 52%,
+    rgb(118 156 208 / .32) 72%, rgb(96 124 172 / .22) 88%, rgb(150 178 214 / .22) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:.72;
+}
+/* 按住（含拖动）：跟手要快，膨胀要弹；宽度也随按钮宽窄变化 */
+.segmented.dragging{cursor:pointer}
+.segmented.dragging .seg-thumb{
+  transition:transform .11s cubic-bezier(.2,1.15,.4,1), width .26s var(--spring), height .26s var(--spring);
+}
+.segmented.dragging button.active{font-weight:600}
+/* 窗口正在被拖拽缩放时，滑块不许「追」着窗口跑 */
+html.resizing .seg-thumb{transition:none}
+
+/* ---------------- 窗口缩放（自绘边缘手柄） ----------------
+   frame:false + thickFrame:false：Windows 不保留非客户区（所以没有那圈裸亚克力），
+   代价是没有原生缩放边框。这 8 个透明手柄 + win.setBounds() 自己实现缩放。 */
+.rz{position:fixed;inset:0;z-index:80;pointer-events:none}
+.rz i{position:absolute;display:block;pointer-events:auto;-webkit-app-region:no-drag}
+.rz .rz-n{left:14px;right:14px;top:0;height:5px;cursor:ns-resize}
+.rz .rz-s{left:14px;right:14px;bottom:0;height:5px;cursor:ns-resize}
+.rz .rz-w{top:14px;bottom:14px;left:0;width:5px;cursor:ew-resize}
+.rz .rz-e{top:14px;bottom:14px;right:0;width:5px;cursor:ew-resize}
+.rz .rz-nw{left:0;top:0;width:13px;height:13px;cursor:nwse-resize}
+.rz .rz-ne{right:0;top:0;width:13px;height:13px;cursor:nesw-resize}
+.rz .rz-sw{left:0;bottom:0;width:13px;height:13px;cursor:nesw-resize}
+.rz .rz-se{right:0;bottom:0;width:13px;height:13px;cursor:nwse-resize}
+
+.section-head{display:flex;align-items:baseline;justify-content:space-between;padding:0 4px}
+.h2{font-size:20px;font-weight:650;letter-spacing:-.012em}
+.hint{font-size:12px;color:var(--text3)}
+
+/* ---------------- 玻璃卡片（外层描边不滚动，内层滚动） ---------------- */
+.card-shell{
+  position:relative;flex:1;min-height:0;border-radius:var(--r-card);
+  background:var(--card);overflow:hidden;
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), inset 0 24px 40px -32px rgb(255 255 255 / .90);
+}
+.card{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden}
+.card::-webkit-scrollbar{width:11px}
+.card::-webkit-scrollbar-thumb{
+  background:var(--track);border-radius:6px;border:3.5px solid transparent;background-clip:content-box;
+}
+
+.row{
+  position:relative;display:flex;align-items:center;gap:13px;
+  padding:10px 16px;min-height:calc(var(--ico) + 16px);cursor:default;overflow:hidden;
+  transition:background .18s;
+}
+.row + .row::before{
+  content:"";position:absolute;left:calc(29px + var(--ico));right:16px;top:0;height:1px;background:var(--hair);
+}
+.row:hover{background:var(--hover)}
+/* M8 主人第 9 条：列表行也要「果冻」—— 和「最近 7 天」「每日时长」的柱子同一套弹簧曲线。
+   只动行内的图标 / 名字 / 进度条（整行缩放会顶破卡片、还会压到相邻行），
+   并且**不挂常驻 will-change**（第 26 轮教训：几十行各自提成合成层，整屏重绘就掉帧）。
+   第 28 轮实测（--no-bg-throttle 探针）：安静机器上悬停 ≈ 85~95fps、静止 165fps，
+   四样一起动跟只动一样快 —— 说明瓶颈在「整窗合成玻璃」而不是这几条 transform，
+   所以这里只做两笔稳赚的减法（都写在下面对应处），不再动弹簧曲线本身。 */
+.row .ico{transition:transform .34s var(--spring), box-shadow .25s ease}
+.row .name,.row .dur{transition:transform .34s var(--spring)}
+.row .bar{transition:transform .34s var(--spring), box-shadow .25s ease;transform-origin:0 50%}
+.row:hover .ico{
+  transform:scale(1.12) rotate(-1.5deg);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 5px 14px rgb(46 107 168 / .26);
+}
+.row:hover .name{transform:translateX(4px)}
+.row:hover .dur{transform:translateX(-3px)}
+.row:hover .bar{transform:scaleY(1.5);box-shadow:inset 0 1px 1px rgb(0 0 0 / .10), 0 1px 6px rgb(46 107 168 / .20)}
+/* 悬停时一道高光扫过（specular sweep）
+   第 28 轮减肥：原来 inset -60%/-30% = 整行 1.6 倍大的渐变层，每帧都要重画一遍 —— 收窄到 1.3 倍，
+   并且悬停时才提成自己的合成层（渐变只光栅化一次，之后只是「推着这张纹理走」）。 */
+.row::after{
+  content:"";position:absolute;inset:-30% -20%;pointer-events:none;opacity:0;
+  background:linear-gradient(112deg,transparent 40%,rgb(255 255 255 / .45) 50%,transparent 60%);
+  transform:translateX(-130%);
+}
+.row:hover::after{opacity:1;animation:sweep .72s cubic-bezier(.2,.7,.2,1);will-change:transform}
+@keyframes sweep{from{transform:translateX(-130%)}to{transform:translateX(130%)}}
+
+.ico{
+  position:relative;width:var(--ico);height:var(--ico);flex:0 0 var(--ico);
+  border-radius:calc(var(--ico) * .23);
+  overflow:hidden;display:grid;place-items:center;background:var(--card-soft);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 2px 6px rgb(0 0 0 / .10);
+}
+/* 第 28 轮：拿掉 img 上的 drop-shadow —— 图标在悬停时会跟着 .ico 一起缩放，
+   这个滤镜就每帧都要重算一遍（和第 26 轮详情页掉帧是同一类开销）。.ico 自己那圈阴影留着，
+   肉眼几乎看不出差别。 */
+.ico img{width:calc(var(--ico) * .79);height:calc(var(--ico) * .79);object-fit:contain}
+.ico .letter{font-size:calc(var(--ico) * .40);font-weight:650;color:var(--text2)}
+.col{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.name{font-size:17px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dur{font-size:15px;color:var(--text2);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+.bar{
+  position:relative;height:5px;border-radius:3px;background:var(--track);overflow:hidden;
+  box-shadow:inset 0 1px 1px rgb(0 0 0 / .10);
+}
+.bar i{
+  display:block;height:100%;border-radius:3px;background:var(--fill);
+  box-shadow:inset 0 1px 0 rgb(255 255 255 / .50);
+  transition:width .32s cubic-bezier(.2,.8,.2,1);
+}
+
+/* 空闲：占一整行（主人 4 号决定） */
+.row.idle .ico{background:transparent;box-shadow:none;font-size:calc(var(--ico) * .46);color:var(--text3)}
+.row.idle .name{color:var(--text2)}
+.row.idle .dur{color:var(--text3)}
+.idlebar{height:5px;border-radius:3px;background:var(--track)}
+
+.sub{font-size:12px;color:var(--text3)}
+
+.empty{padding:56px 24px;text-align:center;color:var(--text3);font-size:14px;line-height:1.8}
+.footnote{font-size:11px;color:var(--text3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------------- 显示设置（玻璃浮层） ---------------- */
+.sheet{
+  position:absolute;top:54px;right:14px;width:304px;z-index:30;
+  padding:15px 16px 13px;border-radius:var(--r-panel);
+  background:var(--sheet-bg);
+  -webkit-backdrop-filter:blur(26px) saturate(180%);
+  backdrop-filter:blur(26px) saturate(180%);
+  box-shadow:0 20px 44px rgb(0 0 0 / .20), 0 2px 10px rgb(0 0 0 / .10);
+  transform-origin:top right;
+  animation:sheetIn .26s cubic-bezier(.2,.9,.24,1);
+}
+@keyframes sheetIn{from{opacity:0;transform:scale(.94) translateY(-6px)}to{opacity:1;transform:none}}
+.sheet[hidden]{display:none}
+.sheet-title{font-size:12px;font-weight:600;color:var(--text3);letter-spacing:.04em;margin:0 2px 12px}
+.sheet-row{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.sheet-label{font-size:13px;color:var(--text);flex:0 0 auto;width:76px}
+.sheet-note{font-size:10.5px;line-height:1.7;color:var(--text3);border-top:1px solid var(--hair);padding-top:10px;margin-top:2px;word-break:break-all;white-space:pre-line}
+
+.slider-wrap{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.slider-end{font-size:10px;color:var(--text3);white-space:nowrap}
+.slider{
+  -webkit-appearance:none;appearance:none;flex:1;min-width:0;height:26px;background:transparent;cursor:pointer;
+}
+.slider::-webkit-slider-runnable-track{
+  height:6px;border-radius:3px;
+  background:linear-gradient(90deg,var(--accent) var(--pct,55%),var(--track) var(--pct,55%));
+  box-shadow:inset 0 1px 2px rgb(0 0 0 / .14);
+}
+.slider::-webkit-slider-thumb{
+  -webkit-appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;
+  background:radial-gradient(120% 120% at 32% 20%, #fff, #f0f0f4 72%);
+  box-shadow:0 1px 3px rgb(0 0 0 / .30), 0 0 0 .5px rgb(0 0 0 / .06), inset 0 1px 0 #fff;
+  transition:transform .16s;
+}
+.slider:active::-webkit-slider-thumb{transform:scale(1.12)}
+
+/* ---------------- 大日历选择器（苹果风 · M2 尾巴） ----------------
+   点日期标题弹出。一屏看整月：有记录的日子带小圆点，未来 / 没有记录之前的日子置灰。
+   点标题切「整年 12 个月」。位置用 margin-left 居中而不是 translateX——
+   因为弹出的动画要用 transform，两者会打架（会看到弹层先跳到左边再弹）。 */
+.calpop{
+  position:absolute;top:74px;left:50%;width:322px;margin-left:-161px;z-index:28;
+  padding:12px 12px 10px;border-radius:var(--r-panel);
+  background:var(--sheet-bg);
+  -webkit-backdrop-filter:blur(26px) saturate(180%);
+  backdrop-filter:blur(26px) saturate(180%);
+  box-shadow:0 22px 48px rgb(0 0 0 / .22), 0 2px 10px rgb(0 0 0 / .10);
+  transform-origin:top center;
+  animation:sheetIn .26s cubic-bezier(.2,.9,.24,1);
+}
+.calpop[hidden]{display:none}
+.cal-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 0 4px}
+.cal-title{
+  border:0;background:transparent;font-family:inherit;font-size:14.5px;font-weight:650;
+  color:var(--text);cursor:pointer;padding:4px 14px;border-radius:999px;transition:background .16s;
+}
+.cal-title:hover{background:var(--hover)}
+.cal-week,.cal-grid{display:grid;grid-template-columns:repeat(7,1fr)}
+.cal-week span{text-align:center;font-size:10.5px;color:var(--text3);padding:2px 0 6px}
+.cal-grid{gap:1px 0}
+.cal-cell{
+  position:relative;height:34px;border:0;background:transparent;font-family:inherit;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:9px;
+}
+.cal-cell .d{
+  position:relative;display:flex;align-items:center;justify-content:center;
+  width:30px;height:30px;border-radius:50%;font-size:13.5px;color:var(--text);
+  font-variant-numeric:tabular-nums;transition:background .14s, color .14s;
+}
+.cal-cell:hover:not(.off) .d{background:var(--hover)}
+.cal-cell.today .d{color:var(--accent);font-weight:700}
+.cal-cell.inrange:not(.sel) .d{background:var(--card-soft)}
+.cal-cell.sel .d{background:var(--accent);color:#fff;font-weight:650;box-shadow:0 2px 8px rgb(46 107 168 / .38)}
+.cal-cell.sel.today .d{color:#fff}
+.cal-cell.off{color:var(--text3);cursor:default}
+.cal-cell.off .d{color:var(--text3);opacity:.42}
+.cal-cell.out .d{opacity:.42}
+.cal-cell .dot{
+  position:absolute;bottom:0;left:50%;margin-left:-2px;width:4px;height:4px;
+  border-radius:50%;background:var(--accent);opacity:.9;
+}
+.cal-cell.sel .dot{background:#fff;bottom:4px}
+/* 整年视图：12 个月，圆点表示这个月有记录 */
+.cal-grid.months{grid-template-columns:repeat(3,1fr);gap:5px}
+.cal-grid.months .cal-cell{height:46px}
+.cal-grid.months .cal-cell .d{width:100%;height:32px;border-radius:9px;font-size:12.5px}
+.cal-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-top:8px;padding-top:8px;border-top:1px solid var(--hair);
+}
+.cal-back{
+  border:0;background:var(--glass-hi);font-family:inherit;font-size:12px;color:var(--text);
+  padding:5px 12px;border-radius:999px;cursor:pointer;transition:background .16s, transform .16s;
+}
+.cal-back:hover{transform:translateY(-1px)}
+.cal-back:active{transform:scale(.96)}
+.cal-hint{font-size:10.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 可选：真·折射（SVG 位移滤镜）。默认关闭，用 --liquid-refract 打开实测 */
+html[data-refract="1"] .rail,
+html[data-refract="1"] .glass-pill,
+html[data-refract="1"] .segmented,
+html[data-refract="1"] .card-shell{
+  backdrop-filter:url(#lgLens);
+}
+/* 资源纪律：本样式表里**没有任何无限循环动画**。
+   实测：软件合成下一个持续动画会让 GPU 进程吃掉最多一整个核心；
+   所有动效（滑块、悬停扫光、设置面板）都改成事件驱动的一次性动画。 */
+/* 省电模式（--no-fx）：彻底静态化，外观不变，只去掉「流动」与静态滤镜 */
+html.no-fx .grain{transform:none}
+html.no-fx .row:hover::after{animation:none;opacity:0}
+html.no-fx .seg-thumb{transition:none}
+html.no-fx .sheet{animation:none}
+html.no-fx .calpop{animation:none}
+
+/* —— 仅测试：受控假壁纸（--mock-bg / --mock-bg=light），用来在固定背景下做视觉 QA —— */
+html.mock-bg .app{background:transparent;background-image:none}
+/* 与真实渲染同序：假壁纸 → 窗底压层 → 透镜受光（全部在这一层里按顺序叠） */
+.mock-bg-layer{
+  position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(118% 88% at 1% 0%, var(--lens-a), rgb(255 255 255 / 0) 46%),
+    radial-gradient(112% 96% at 100% 100%, var(--lens-b), rgb(255 255 255 / 0) 44%),
+    linear-gradient(var(--app-tint), var(--app-tint)),
+    radial-gradient(62% 58% at 10% 6%,  #2E6E8E 0%, rgb(46 110 142 / 0) 62%),
+    radial-gradient(58% 52% at 90% 10%, #4E86C8 0%, rgb(78 134 200 / 0) 64%),
+    radial-gradient(70% 62% at 24% 98%, #1E3A5C 0%, rgb(30 58 92 / 0) 66%),
+    radial-gradient(62% 58% at 96% 92%, #3C5E92 0%, rgb(60 94 146 / 0) 64%),
+    linear-gradient(158deg,#070D18 0%,#0E1729 58%,#050911 100%);
+}
+/* 浅色假壁纸：主人用浅色模式，玻璃必须在浅底上也读得清 */
+html.mock-light .mock-bg-layer{
+  background:
+    radial-gradient(118% 88% at 1% 0%, var(--lens-a), rgb(255 255 255 / 0) 46%),
+    radial-gradient(112% 96% at 100% 100%, var(--lens-b), rgb(255 255 255 / 0) 44%),
+    linear-gradient(var(--app-tint), var(--app-tint)),
+    radial-gradient(46% 44% at 14% 12%, #A8CFEA 0%, rgb(168 207 234 / 0) 60%),
+    radial-gradient(42% 40% at 78% 6%,  #BCCDE4 0%, rgb(188 205 228 / 0) 62%),
+    radial-gradient(50% 46% at 24% 96%, #9FBAD8 0%, rgb(159 186 216 / 0) 64%),
+    radial-gradient(44% 42% at 92% 84%, #C4D6E8 0%, rgb(196 214 232 / 0) 62%),
+    radial-gradient(36% 32% at 52% 48%, #8FAACC 0%, rgb(143 170 204 / 0) 66%),
+    linear-gradient(158deg,#EDF2F9 0%,#E2E9F3 55%,#D8E1EE 100%);
+}
+html.mock-bg .rail,
+html.mock-bg .card-shell,
+html.mock-bg .glass-pill,
+html.mock-bg .segmented,
+html.mock-bg .titlebar{
+  -webkit-backdrop-filter:blur(30px) saturate(185%);
+  backdrop-filter:blur(30px) saturate(185%);
+}
+
+html.glass-fallback .app{
+  background:transparent;
+  -webkit-backdrop-filter:blur(28px) saturate(190%) brightness(1.05);
+  backdrop-filter:blur(28px) saturate(190%) brightness(1.05);
+}
+html.glass-fallback .rail,
+html.glass-fallback .card-shell,
+html.glass-fallback .glass-pill,
+html.glass-fallback .segmented{
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+}
+
+html[data-theme="dark"] .titlebar::after{opacity:.5}
+
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important;transition:none !important}
+}
+
+/* ============================================================
+   M3 分类
+   ============================================================ */
+
+/* ---------------- 左栏：分类列表 + 新建 ---------------- */
+.rail-top{display:flex;flex-direction:column;gap:3px}
+.rail-add{
+  appearance:none;border:0;background:transparent;text-align:left;font-family:inherit;
+  height:34px;padding:0 14px;border-radius:999px;font-size:13px;color:var(--text2);cursor:pointer;
+  transition:background .18s var(--spring), color .18s;
+}
+.rail-add:hover{background:var(--hover);color:var(--text)}
+.rail-add.ghost{color:var(--accent);font-size:12px}
+.rail-item .cat-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;margin-right:9px;box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .14)}
+.rail-item .cat-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rail-item .cat-n{font-size:12px;color:var(--text3);font-variant-numeric:tabular-nums}
+.rail-item.active .cat-n{color:var(--text2)}
+
+/* ---------------- 区块头右侧：提示 + 视图切换 ---------------- */
+.head-right{display:flex;align-items:center;gap:12px}
+
+/* ---------------- 行内「⋯」与分类小标签 ---------------- */
+.row-more{
+  appearance:none;border:0;background:transparent;font-family:inherit;font-size:15px;line-height:1;
+  color:var(--text3);cursor:pointer;padding:4px 8px;border-radius:8px;opacity:0;
+  transition:opacity .16s, background .16s, color .16s;
+}
+.row:hover .row-more{opacity:1}
+.row-more:hover{background:var(--hover);color:var(--text)}
+.row-more.on{opacity:1;color:var(--accent)}
+.cat-tags{display:inline-flex;gap:5px;align-items:center;margin:0 auto 0 2px}
+.cat-tag{
+  display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 7px;border-radius:999px;
+  font-size:10.5px;font-weight:400;color:var(--text2);background:var(--card-soft);
+  box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .05);
+}
+.cat-tag i{width:6px;height:6px;border-radius:50%;display:block;flex:0 0 6px}
+
+/* ---------------- 归类到…（浮层，跟着那一行） ---------------- */
+.catpop{
+  position:fixed;z-index:40;width:248px;padding:12px 12px 10px;border-radius:var(--r-panel);
+  background:var(--sheet-bg);
+  -webkit-backdrop-filter:blur(26px) saturate(180%);
+  backdrop-filter:blur(26px) saturate(180%);
+  box-shadow:0 20px 44px rgb(0 0 0 / .22), 0 2px 10px rgb(0 0 0 / .10);
+  transform-origin:top center;animation:sheetIn .22s cubic-bezier(.2,.9,.24,1);
+}
+.catpop[hidden]{display:none}
+.pop-title{font-size:12px;font-weight:600;color:var(--text3);letter-spacing:.04em;margin:0 2px 9px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-list{display:flex;flex-direction:column;gap:2px;max-height:242px;overflow-y:auto}
+.cat-chip{
+  appearance:none;border:0;background:transparent;font-family:inherit;text-align:left;
+  display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:9px;
+  font-size:13px;color:var(--text);cursor:pointer;flex:0 0 auto;
+}
+.cat-chip:hover{background:var(--hover)}
+.cat-chip .swatch-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .14)}
+.cat-chip .cn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-chip .rule-mark{font-size:10px;color:var(--text3)}
+.cat-chip .tick{
+  margin-left:6px;width:15px;height:15px;border-radius:5px;flex:0 0 15px;position:relative;
+  box-shadow:inset 0 0 0 1.2px var(--text3);
+}
+.cat-chip.on .tick{background:var(--accent);box-shadow:none}
+.cat-chip.on .tick::after{
+  content:"";position:absolute;left:4.6px;top:1.6px;width:4px;height:8px;
+  border:solid #fff;border-width:0 1.8px 1.8px 0;transform:rotate(42deg);
+}
+.pop-foot{display:flex;justify-content:space-between;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--hair)}
+.pop-link{
+  appearance:none;border:0;background:transparent;font-family:inherit;font-size:12px;
+  color:var(--accent);cursor:pointer;padding:3px 7px;border-radius:7px;
+}
+.pop-link:hover{background:var(--hover)}
+.pop-hint{font-size:10px;line-height:1.6;color:var(--text3);margin-top:7px}
+/* M8 主人第 9 条：归类弹层里的「自定义名称」输入行（和分类编辑器的 .cm-rename 同款） */
+.pop-rename{display:flex;gap:6px;margin-top:9px}
+.pop-rename[hidden]{display:none}
+.pop-rename .txt{flex:1;min-width:0}
+
+/* ---------------- 分类编辑器 ---------------- */
+.catedit{
+  position:fixed;z-index:42;inset:0;margin:auto;width:350px;height:fit-content;max-height:80vh;overflow-y:auto;
+  padding:15px 16px 13px;border-radius:var(--r-panel);
+  background:var(--sheet-bg);
+  -webkit-backdrop-filter:blur(26px) saturate(180%);
+  backdrop-filter:blur(26px) saturate(180%);
+  box-shadow:0 24px 54px rgb(0 0 0 / .26), 0 2px 10px rgb(0 0 0 / .12);
+  animation:sheetIn .24s cubic-bezier(.2,.9,.24,1);
+}
+.catedit[hidden]{display:none}
+.sheet-title.plain{margin:0 2px 8px}
+.txt{
+  flex:1;min-width:0;height:30px;padding:0 10px;border-radius:9px;font-family:inherit;font-size:13px;
+  color:var(--text);background:var(--card-soft);border:0;outline:none;
+  box-shadow:inset 0 0 0 1px var(--hair), inset 0 1px 2px rgb(0 0 0 / .05);
+}
+.txt:focus{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.txt::placeholder{color:var(--text3)}
+.swatches{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.swatch{
+  appearance:none;width:20px;height:20px;border-radius:50%;border:0;cursor:pointer;padding:0;
+  box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .16);transition:transform .14s var(--spring);
+}
+.swatch:hover{transform:scale(1.14)}
+.swatch.on{box-shadow:0 0 0 2px var(--card), 0 0 0 3.6px var(--text)}
+.rule-block{border-top:1px solid var(--hair);margin:2px 0 12px;padding-top:11px}
+.rule-list{display:flex;flex-direction:column;gap:1px;max-height:184px;overflow-y:auto;margin-bottom:9px}
+.rule-list:empty::after{content:"还没有规则";font-size:11px;color:var(--text3);padding:2px 4px}
+.rule-row{display:flex;align-items:center;gap:8px;min-height:27px;padding:2px 6px;border-radius:8px;font-size:11.5px;color:var(--text2)}
+.rule-row:hover{background:var(--hover)}
+.rule-row .k{flex:0 0 auto;font-size:10px;padding:1.5px 6px;border-radius:999px;background:var(--card-soft);color:var(--text3)}
+.rule-row .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-variant-numeric:tabular-nums}
+.rule-row .x{
+  appearance:none;border:0;background:transparent;color:var(--text3);font-family:inherit;
+  font-size:13px;cursor:pointer;padding:2px 6px;border-radius:6px;opacity:0;transition:opacity .14s;
+}
+.rule-row:hover .x{opacity:1}
+.rule-row .x:hover{background:var(--hover);color:#FF375F}
+.rule-add{display:flex;gap:6px;align-items:center}
+.rule-add .txt{font-size:12px}
+/* M5.6.1（主人）：这个类原来叫 .sel —— 和选中态（.heat-cell.sel / .cal-cell.sel）撞名，
+   通用表单样式会漏到那些格子上，把热力图的「今天」撑成 30×30 圆角药丸盖住邻居。
+   改名 .pick，只给规则下拉用；选中态一律走 .heat-cell.sel / .cal-cell.sel。 */
+.pick{
+  height:30px;border-radius:9px;border:0;font-family:inherit;font-size:11.5px;padding:0 6px;
+  color:var(--text);background:var(--card-soft);cursor:pointer;outline:none;
+  box-shadow:inset 0 0 0 1px var(--hair);
+}
+.pick option{color:#000}
+.rule-hint{font-size:10px;line-height:1.6;color:var(--text3);margin-top:7px;min-height:16px}
+.rule-hint.bad{color:#FF375F}
+.mini{
+  appearance:none;border:0;font-family:inherit;font-size:12px;height:30px;padding:0 13px;flex:0 0 auto;
+  border-radius:999px;cursor:pointer;color:var(--text2);background:var(--card-soft);
+  box-shadow:inset 0 0 0 1px var(--hair);transition:background .16s, color .16s;
+}
+.mini:hover{background:var(--hover);color:var(--text)}
+.mini.primary{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgb(46 107 168 / .34)}
+.mini.danger{color:#FF375F}
+.edit-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.edit-right{display:flex;gap:6px}
+
+/* ---------------- 分类视图的行（可点开看成员） ---------------- */
+.row.cat{cursor:pointer}
+.row.cat .ico{background:transparent;box-shadow:none}
+.row.cat .swatch-lg{width:calc(var(--ico) * .54);height:calc(var(--ico) * .54);border-radius:50%;
+  box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .14), 0 1px 4px rgb(0 0 0 / .16)}
+.row.cat .caret{font-size:11px;color:var(--text3);padding:4px 6px;transition:transform .2s var(--spring)}
+.row.cat.open .caret{transform:rotate(90deg)}
+.row.member{padding-left:calc(29px + var(--ico));background:var(--card-soft)}
+.row.member .ico{width:calc(var(--ico) * .62);height:calc(var(--ico) * .62);flex:0 0 calc(var(--ico) * .62)}
+.row.member .ico img{width:calc(var(--ico) * .48);height:calc(var(--ico) * .48)}
+.row.member .ico .letter{font-size:calc(var(--ico) * .25)}
+.row.member .name{font-size:15px}
+.row.member .dur{font-size:13.5px}
+
+/* ---------------- 开关（设置里的「自动归类」） ---------------- */
+.switch-wrap{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+/* M8（主人 8 号）：三个备份按钮以前挤在一行，最右边那个被设置面板裁掉了 */
+.switch-wrap.wrap{flex-wrap:wrap;gap:7px}
+/* 同一组按钮只该有一种尺寸（量几何优先）：都锁 74 宽，排成 2 + 1 两行也整齐 */
+.switch-wrap.wrap .mini{width:74px;justify-content:center}
+.switch{
+  appearance:none;border:0;width:40px;height:23px;border-radius:999px;cursor:pointer;padding:0;
+  background:var(--track);position:relative;transition:background .2s;flex:0 0 40px;
+}
+.switch::after{
+  content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;
+  background:radial-gradient(120% 120% at 32% 20%, #fff, #f0f0f4 72%);
+  box-shadow:0 1px 3px rgb(0 0 0 / .30);transition:transform .2s var(--spring);
+}
+.switch.on{background:var(--accent)}
+.switch.on::after{transform:translateX(17px)}
+.switch-hint{font-size:11.5px;color:var(--text3)}
+
+html.no-fx .catpop,html.no-fx .catedit{animation:none}
+
+/* 浮层里的细滚动条：和列表同语言，别抢戏 */
+.cat-list::-webkit-scrollbar,.rule-list::-webkit-scrollbar,.catedit::-webkit-scrollbar{width:9px}
+.cat-list::-webkit-scrollbar-thumb,.rule-list::-webkit-scrollbar-thumb,.catedit::-webkit-scrollbar-thumb{
+  background:var(--track);border-radius:5px;border:3px solid transparent;background-clip:content-box;
+}
+
+/* 全屏退避（M4 S4.4）：前台被全屏应用 / 游戏占满时，界面彻底静止 —— 不流动、不重绘，省下的
+   就是游戏要用的那点 CPU 与显存。退回前台时主进程会把 .retreat 摘掉，动效原样回来。 */
+html.retreat .grain{transform:none}
+html.retreat .row:hover::after{animation:none;opacity:0}
+html.retreat .seg-thumb{transition:none}
+html.retreat .sheet{animation:none}
+html.retreat .calpop{animation:none}
+html.retreat .catpop,html.retreat .catedit{animation:none}
+/* M8：省电 / 退避两档里，列表行的「果冻」位移也一起关掉（背景高亮留着，知道鼠标在哪就行） */
+html.no-fx .row:hover .ico,html.no-fx .row:hover .bar,html.no-fx .row:hover .name,html.no-fx .row:hover .dur,
+html.retreat .row:hover .ico,html.retreat .row:hover .bar,html.retreat .row:hover .name,html.retreat .row:hover .dur{
+  transform:none;
+}
+
+/* ---------------- 应用详情页（M5 · F5） ----------------
+   整块盖住标题栏以下的区域（左栏一起盖），玻璃浮层，内层自己滚。
+   柱图 = 逐日「本应用 + 空闲 + 锁屏 / 休眠」堆叠：一眼看出哪天用得多、哪天纯挂机。
+   颜色沿用 --fill / 中性灰，浅深两套都由令牌驱动，不额外写死颜色。 */
+.detail{
+  position:absolute;left:0;right:0;top:48px;bottom:0;z-index:22;
+  display:flex;flex-direction:column;gap:13px;padding:14px 20px 16px;
+  background:var(--sheet-bg);
+  /* M5.6 性能（主人 5 号）：26px 的整窗背景模糊 + 位移入场动画，每开一次都要把整个窗口
+     重新栅格化一遍 —— 这是「进详情页会卡」的主因。收到 14px（--sheet-bg 本身已经很实，
+     观感几乎没差），入场动画也改成只淡入。 */
+  /* M8（主人 3 号）：详情页是「整窗」浮层，backdrop-filter 让每一帧重绘都要重算整窗模糊
+     —— 鼠标扫过柱图时的掉帧主要来自这里。底下只剩窗口自己的底色（.rail/.main 已隐藏、
+     .grain 已 display:none），本来也没什么可模糊的；去掉后观感一致、手感立刻跟手。 */
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+  overflow-y:auto;overscroll-behavior:contain;
+  animation:dtIn .28s cubic-bezier(.2,.9,.24,1);
+}
+.detail[hidden]{display:none}
+/* 详情打开时把底下的左栏 / 主区藏掉：玻璃浮层只透到窗口自己的底，不再把列表文字串上来 */
+body.dt-open .rail,body.dt-open .main{visibility:hidden}
+/* M5.6：详情页打开时把整窗的 .grain 收起来 —— 它在浮层底下根本看不见，
+   却要一直参与整窗合成（还带聚焦位移的 transform）。收掉能明显少一份合成开销。 */
+body.dt-open .grain{display:none}
+/* M5.6：入场只淡入、不做 transform —— 带 backdrop-filter 的整窗浮层做 transform 会每帧重算模糊 */
+@keyframes dtIn{from{opacity:0}to{opacity:1}}
+.detail::-webkit-scrollbar{width:11px}
+.detail::-webkit-scrollbar-thumb{
+  background:var(--track);border-radius:6px;border:3.5px solid transparent;background-clip:content-box;
+}
+
+.dt-top{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.dt-back{
+  border:0;border-radius:999px;background:var(--glass-2);color:var(--text2);
+  font-family:inherit;font-size:13px;padding:6px 14px;cursor:pointer;
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 2px 8px rgb(0 0 0 / .10);
+  transition:background .16s, color .16s, transform .16s var(--spring);
+}
+.dt-back:hover{background:var(--glass-hi);color:var(--text);transform:translateX(-1px)}
+.dt-back:active{transform:scale(.95)}
+
+.dt-hero{
+  position:relative;flex:0 0 auto;display:flex;align-items:center;gap:16px;
+  padding:15px 18px;border-radius:var(--r-card);background:var(--card);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), inset 0 24px 40px -32px rgb(255 255 255 / .90);
+}
+.dt-hero::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(158deg,var(--rim-a) 0%,var(--rim-b) 34%,var(--rim-b) 66%,var(--rim-c) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+}
+.dt-ico{
+  position:relative;width:calc(var(--ico) * 1.45);height:calc(var(--ico) * 1.45);
+  flex:0 0 calc(var(--ico) * 1.45);border-radius:calc(var(--ico) * .33);
+  display:grid;place-items:center;overflow:hidden;background:var(--card-soft);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 3px 10px rgb(0 0 0 / .12);
+}
+.dt-ico img{width:78%;height:78%;object-fit:contain;filter:drop-shadow(0 1px 1px rgb(0 0 0 / .16))}
+.dt-ico .letter{font-size:calc(var(--ico) * .55);font-weight:650;color:var(--text2)}
+.dt-id{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.dt-name{font-size:23px;font-weight:650;letter-spacing:-.014em;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dt-path{font-size:11.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dt-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:1px}
+/* M7 主人第 6 条：详情页的「自定义图标」入口（尺寸跟别的迷你按钮一致） */
+.dt-iconrow{display:flex;gap:6px;margin-top:6px}
+.dt-iconrow:empty{display:none}
+.dt-iconbtn{
+  font:inherit;font-size:10.5px;padding:3px 9px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--hair);background:transparent;color:var(--text2)
+}
+.dt-iconbtn:hover{background:var(--hover);color:var(--text)}
+/* M8 主人第 9 条：详情页改名用的行内输入框（高度对齐 .dt-iconbtn，别把这一行撑高） */
+.dt-name-in{
+  flex:0 1 220px;min-width:120px;height:24px;padding:0 8px;border-radius:8px;
+  font-family:inherit;font-size:12px;color:var(--text);background:var(--card-soft);border:0;outline:none;
+  box-shadow:inset 0 0 0 1px var(--hair);
+}
+.dt-name-in:focus{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.dt-nocat{font-size:11.5px;color:var(--text3)}
+.dt-big{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:0 0 auto;padding-left:8px}
+.dt-total{font-size:26px;font-weight:650;letter-spacing:-.02em;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dt-total-l{font-size:11px;color:var(--text3);white-space:nowrap}
+
+.dt-stats{flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(126px,1fr));gap:9px}
+.dt-stat{
+  display:flex;flex-direction:column;gap:3px;padding:9px 12px;border-radius:11px;background:var(--card-soft);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b);
+}
+.dt-s-l{font-size:10.5px;color:var(--text3)}
+.dt-s-v{font-size:16px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dt-s-s{font-size:10.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.dt-chart-card{
+  position:relative;flex:1 1 auto;min-height:170px;max-height:min(420px,52vh);display:flex;flex-direction:column;gap:10px;
+  padding:13px 16px 12px;border-radius:var(--r-card);background:var(--card);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), inset 0 24px 40px -32px rgb(255 255 255 / .90);
+}
+.dt-chart-card::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(158deg,var(--rim-a) 0%,var(--rim-b) 34%,var(--rim-b) 66%,var(--rim-c) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+}
+.dt-chart-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex:0 0 auto}
+.dt-legend{display:flex;gap:12px;font-size:11px;color:var(--text3);flex-wrap:wrap;justify-content:flex-end}
+.dt-legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.dt-legend span::before{content:"";width:9px;height:9px;border-radius:3px;background:var(--fill)}
+.dt-legend .lg-idle::before{background:rgb(140 140 150 / .45)}
+.dt-legend .lg-lock::before{background:rgb(140 140 150 / .80)}
+.dt-chart{flex:1 1 auto;min-height:120px;display:flex;align-items:flex-end;min-width:0}
+.dt-bars{display:flex;align-items:flex-end;gap:6px;width:100%;height:100%}
+/* M5.5：旧 `.dt-bar` 已并入共用柱图（.plot），这里保留空规则避免旧选择器悬空 */
+.dt-bar{flex:1 1 0;min-width:5px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;gap:5px}
+.dt-chart .plot{min-height:120px}
+.dt-stack{
+  flex:1 1 auto;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;
+  border-radius:6px 6px 3px 3px;overflow:hidden;background:var(--track);
+  box-shadow:inset 0 1px 1px rgb(0 0 0 / .10);
+  transition:transform .18s var(--spring);
+}
+.dt-bar:hover .dt-stack{transform:scaleY(1.03)}
+.dt-bar.zero .dt-stack{flex:0 0 4px;border-radius:4px;background:transparent;box-shadow:inset 0 0 0 1px var(--hair);opacity:.62}
+.dt-stack i{display:block;width:100%}
+.dt-stack .s-use{background:var(--fill);box-shadow:inset 0 1px 0 rgb(255 255 255 / .45)}
+.dt-stack .s-idle{background:rgb(140 140 150 / .45)}
+.dt-stack .s-lock{background:rgb(140 140 150 / .80)}
+.dt-stack .s-sleep{background:rgb(96 96 106 / .86)}
+.dt-x{font-size:9.5px;color:var(--text3);text-align:center;white-space:nowrap;height:12px;line-height:12px}
+.dt-x.hide{visibility:hidden}
+.dt-chart-note{font-size:10.5px;line-height:1.7;color:var(--text3);flex:0 0 auto}
+
+/* 动效纪律：退避 / no-fx 下详情页也不动 */
+html.retreat .detail{animation:none}
+html.no-fx .detail{animation:none}
+
+/* ============================================================
+   M5.5 ① 主界面「最近 7 天」概览（仿苹果「屏幕时间」主页）
+   上 = 逐日堆叠柱 + 平均虚线；下 = 24 小时按分类堆叠；底 = 分类图例
+   纯 DOM 柱图（守 M4 纪律：不新增 GPU 层、没有无限循环动画）
+   ============================================================ */
+.ov{
+  position:relative;flex:0 1 auto;min-height:0;max-height:196px;overflow:hidden;
+  display:flex;flex-direction:column;gap:7px;
+  padding:10px 13px 9px;border-radius:var(--r-card);background:var(--card);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), inset 0 24px 40px -32px rgb(255 255 255 / .90);
+}
+.ov::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(158deg,var(--rim-a) 0%,var(--rim-b) 34%,var(--rim-b) 66%,var(--rim-c) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+}
+.ov-head{display:flex;align-items:baseline;gap:10px;flex:0 0 auto}
+.ov-sub{flex:1;min-width:0;font-size:11.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-caret{
+  border:0;background:transparent;color:var(--text3);font-family:inherit;font-size:13px;line-height:1;
+  width:26px;height:22px;margin:-2px -4px -2px 0;border-radius:7px;cursor:pointer;
+  transition:background .16s, color .16s, transform .2s var(--spring);
+}
+.ov-caret:hover{background:var(--hover);color:var(--text)}
+/* M8（主人 5 号）：7 天窗口的前后翻页，和热力图那两个箭头**同一尺寸**（同类元素只该有 1 种） */
+.ov-page{display:flex;gap:2px;align-items:center}
+.ov-chev{
+  border:0;background:transparent;color:var(--text3);font-family:inherit;font-size:12.5px;line-height:1;
+  width:19px;height:19px;flex:0 0 19px;border-radius:6px;cursor:pointer;padding:0;
+  transition:background .16s, color .16s, opacity .16s;
+}
+.ov-chev:hover:not(:disabled){background:var(--hover);color:var(--text)}
+.ov-chev:disabled{opacity:.26;cursor:default}
+.ov.collapsed .ov-caret{transform:rotate(180deg)}
+.ov-body{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ov.collapsed .ov-body,.ov.collapsed .ov-legend{display:none}
+.ov-panel{display:flex;flex-direction:column;gap:5px;min-width:0;min-height:0}
+.ov-cap{display:flex;align-items:baseline;gap:7px;flex:0 0 auto;font-size:10.5px;color:var(--text3)}
+.ov-cap span:first-child{font-size:11.5px;color:var(--text2)}
+.ov-u{color:var(--text3);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ov-legend{display:flex;flex-wrap:wrap;gap:13px;flex:0 0 auto;font-size:11px;color:var(--text3)}
+.ov-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ov-legend i{width:9px;height:9px;border-radius:3px;flex:0 0 9px}
+.ov-legend b{font-weight:600;color:var(--text2);font-variant-numeric:tabular-nums}
+
+/* —— 两张图共用的一套「纯 DOM 柱图」（详情页的时段分布也复用它）——
+   纵轴：右侧只标 max 与 0（平均线额外标一个「平均」）；横轴：按需显示标签 */
+/* M5.5-2：`.plot` 用 grid 精确定位「纵轴(38) + 柱区(1fr)」，横轴用同一份 --px 对齐柱区左边界 */
+.plot{position:relative;flex:1 1 auto;min-height:58px;display:grid;grid-template-columns:1fr auto;--px:11px}
+.plot-y{grid-column:2;grid-row:1;align-self:stretch;position:relative;width:38px;justify-self:end}
+.plot-y span{position:absolute;right:0;font-size:9.5px;line-height:1;color:var(--text3);white-space:nowrap}
+.plot-y .y0{bottom:calc(var(--px) + 1px)}
+.plot-y .y1{top:-1px}
+.plot-y .ya{bottom:calc(var(--px) + (100% - var(--px)) * var(--avg,0) - 5px);color:var(--text2)}
+.plot-bars{grid-column:1;grid-row:1;align-self:end;position:relative;display:flex;align-items:flex-end;gap:3px;width:100%;height:100%}
+.plot-bars::before{
+  content:"";position:absolute;left:0;right:0;top:0;bottom:var(--px);pointer-events:none;
+  background:repeating-linear-gradient(to bottom,rgb(128 128 140 / .17) 0 1px,transparent 1px 25%);
+}
+.plot-avg{
+  position:absolute;left:0;right:0;height:0;pointer-events:none;
+  bottom:calc(var(--px) + (100% - var(--px)) * var(--avg,0));
+  border-top:1px dashed rgb(122 122 132 / .78);
+}
+#dtHours .plot-y{width:52px}
+.pbar{position:relative;flex:1 1 0;min-width:2px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;gap:3px}
+.pst{
+  flex:1 1 auto;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;
+  border-radius:3px 3px 2px 2px;overflow:hidden;background:var(--track);
+  transform-origin:50% 100%;
+  /* M8（主人 3 号）：这里原本常驻 will-change:transform —— 详情页「每日时长」最多 120 根柱子，
+     等于一口气建 120 个合成层；本程序为了内存关着硬件加速（走软件合成），层一多每帧都要
+     重新栅格化，表现就是鼠标扫过柱图掉帧。改成「只有悬停的那一根才提层」。 */
+  transition:transform .34s var(--spring), box-shadow .25s ease;
+}
+/* M7（主人 4 号）：hover 从「微微长高 3%」改成会回弹的果冻 —— 以底边为轴横向撑开 + 纵向长高，
+   配合 --spring 的过冲曲线，鼠标扫过一排柱子时像一串果冻被依次按到。
+   只动 transform / box-shadow / filter，全是合成层属性，不触发布局。 */
+.pbar:hover{z-index:3}
+.pbar:hover .pst{
+  transform:scaleX(1.14) scaleY(1.035);
+  will-change:transform;   /* 提层只发生在被指到的那一根 */
+  /* M8：顺手去掉 filter:brightness() —— 软件渲染下色矩阵要整块重算，换来的「亮一点点」不值 */
+  box-shadow:0 0 0 1px var(--rim-c), 0 4px 12px rgb(46 107 168 / .20);
+}
+.pbar:active .pst{transform:scaleX(1.06) scaleY(.985)}
+.pbar.zero .pst{flex:0 0 3px;background:transparent;box-shadow:inset 0 0 0 1px var(--hair);opacity:.55}
+.pst i{display:block;width:100%}
+.pst .s-use{background:var(--fill);box-shadow:inset 0 1px 0 rgb(255 255 255 / .45)}
+.pst .s-idle{background:rgb(140 140 150 / .42)}
+.pst .s-lock{background:rgb(120 120 130 / .74)}
+.pst .s-sleep{background:rgb(96 96 106 / .86)}
+.px{height:var(--px);line-height:var(--px);font-size:9.5px;color:var(--text3);text-align:center;white-space:nowrap}
+.px.hide{visibility:hidden}
+.px.today{color:var(--text2);font-weight:600}
+
+/* ============================================================
+   M5.5 ② 详情页：页内范围切换 + 双栏（逐日 / 时段分布）
+   ============================================================ */
+.dt-rangehint{flex:1;min-width:0;text-align:right;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#dtSeg{flex:0 0 auto}
+.dt-charts{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:13px;align-items:stretch}
+.dt-charts .dt-chart-card{min-height:140px;max-height:min(470px,58vh)}
+#dtHours .plot{min-height:96px}
+#dtHours .plot-y{width:52px;flex:0 0 52px}
+
+/* ============================================================
+   M5.5 ③ 左栏热力图（原来空着的那块）：能点着跳日期的「最近几周」概览
+   ============================================================ */
+.rail-mid{flex:1 1 auto;min-height:0;min-width:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;padding-top:10px}
+.heat{
+  display:flex;flex-direction:column;gap:6px;min-width:0;padding:9px 10px 10px;border-radius:13px;background:var(--glass-2);
+  box-shadow:inset 0 1px 0 var(--rim-a), inset 0 -1px 0 var(--rim-b), 0 2px 8px rgb(0 0 0 / .06);
+}
+/* M8（主人 4 号）：标题两侧加前后翻页的小箭头 —— 一次翻 4 周（上一段「最近 4 周」） */
+.heat-head{display:flex;align-items:center;gap:5px}
+.heat-chev{
+  border:0;background:transparent;color:var(--text3);font-family:inherit;font-size:12.5px;line-height:1;
+  width:19px;height:19px;flex:0 0 19px;border-radius:6px;cursor:pointer;padding:0;
+  transition:background .16s, color .16s, opacity .16s;
+}
+.heat-chev:hover:not(:disabled){background:var(--hover);color:var(--text)}
+.heat-chev:disabled{opacity:.26;cursor:default}
+/* 左栏只有 170px：数字（合计）优先不截断，日期区间在放不下时自己缩 */
+.heat-t{font-size:11.5px;color:var(--text2);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.heat-s{font-size:10px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums;margin-left:auto;flex:0 0 auto}
+.heat-wd,.heat-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;width:100%;min-width:0}
+.heat-wd{font-size:9px;color:var(--text3);text-align:center;line-height:1}
+/* M5.6（主人 1 号）：旧版是「中灰底 + 0~1 透明度叠加」→ 35 个方块看过去就是一堵灰墙；
+   悬停还会放大到盖住邻居（截图里被超大框框住的那种）。
+   改成 —— 没记录：只剩一圈细描边；有记录：按活跃度上色；悬停：只描一圈边、不缩放。 */
+.heat-cell{
+  position:relative;aspect-ratio:1;border:0;padding:0;border-radius:3.5px;background:transparent;
+  box-shadow:inset 0 0 0 1px var(--hair);cursor:pointer;
+  transition:box-shadow .18s, opacity .18s;
+}
+.heat-cell::after{
+  content:"";position:absolute;inset:1px;border-radius:2.5px;background:var(--fill);
+  opacity:var(--a,0);transition:opacity .2s;
+}
+.heat-cell.has{box-shadow:inset 0 0 0 1px transparent}
+.heat-cell:hover{box-shadow:inset 0 0 0 1.5px var(--fill)}
+.heat-cell:active{opacity:.72}
+.heat-cell.future{box-shadow:none;cursor:default}
+.heat-cell.future::after{display:none}
+.heat-cell.sel{box-shadow:inset 0 0 0 1.8px var(--text2)}
+.heat-empty{font-size:10.5px;color:var(--text3);line-height:1.6}
+/* ============================================================
+   M5.6 ③ 自绘浮层提示（主人 2 号）：替掉原生 title 的黑框
+   原生 title 永远贴在光标正下方 → 鼠标自己就把内容挡住了。
+   这一层由 app.js 定位到目标的「右上方」（放不下自动翻转），pointer-events:none 不吃鼠标。
+   ============================================================ */
+.tip{
+  position:fixed;left:0;top:0;z-index:70;pointer-events:none;will-change:transform;
+  display:flex;flex-direction:column;gap:2px;max-width:240px;
+  padding:7px 10px;border-radius:9px;background:var(--tip-bg);color:var(--text);
+  box-shadow:inset 0 1px 0 var(--rim-a), 0 6px 18px rgb(0 0 0 / .20);
+  font-size:11.5px;line-height:1.5;white-space:nowrap;
+  opacity:0;transition:opacity .16s ease;   /* M7：位置交给 app.js 的弹簧（transform），这里只淡入，两者不抢同一个属性 */
+}
+.tip.on{opacity:1}
+.tip[hidden]{display:none}
+.tip .tip-t{font-weight:600;color:var(--text)}
+
+/* 可点的柱子（热力图 / 概览 / 详情）给一点指示；详情页超过 30 天时能按住拖动 */
+.pbar.clickable{cursor:pointer}
+.pbar.clickable:hover .pst{filter:brightness(1.07)}
+.dt-chart.pannable{cursor:grab}
+.dt-chart.pannable.panning{cursor:grabbing}
+
+/* ============================================================
+   M8（主人 6 号）：分类右键菜单 —— 建完的分类随时能改名 / 换色 / 删掉
+   ============================================================ */
+.catmenu{
+  position:absolute;z-index:34;min-width:200px;max-width:238px;
+  padding:12px 13px 10px;border-radius:15px;background:var(--sheet-bg);
+  -webkit-backdrop-filter:blur(22px) saturate(180%);
+  backdrop-filter:blur(22px) saturate(180%);
+  box-shadow:0 16px 36px rgb(0 0 0 / .20), 0 2px 8px rgb(0 0 0 / .10);
+  transform-origin:top left;
+  animation:sheetIn .2s cubic-bezier(.2,.9,.24,1);
+}
+.catmenu[hidden]{display:none}
+.cm-rename{display:flex;gap:6px;margin-bottom:10px}
+.cm-rename .txt{flex:1;min-width:0}
+.cm-sw{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.cm-sw button{
+  width:19px;height:19px;border:0;border-radius:6px;cursor:pointer;padding:0;
+  box-shadow:inset 0 0 0 1px rgb(0 0 0 / .12);transition:transform .16s var(--spring);
+}
+.cm-sw button:hover{transform:scale(1.16)}
+.cm-sw button.on{box-shadow:0 0 0 2px var(--text2)}
+.cm-item{
+  display:block;width:100%;border:0;background:transparent;font-family:inherit;text-align:left;
+  font-size:12.5px;color:var(--text);padding:7px 9px;border-radius:9px;cursor:pointer;
+  transition:background .16s, color .16s;
+}
+.cm-item:hover{background:var(--hover)}
+.cm-item.danger{color:#FF375F}
+.cm-item.danger.armed{background:rgb(255 55 95 / .14);font-weight:600}

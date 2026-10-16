@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' nami-icon: data:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+<title>Nami Time</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Liquid Glass 折射滤镜：对面板边缘做真实的透镜位移（默认关闭，实测用） -->
+  <svg id="lgDefs" width="0" height="0" aria-hidden="true">
+    <defs>
+      <filter id="lgLens" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.0016 0.0055" numOctaves="1" seed="9" result="noise" />
+        <feGaussianBlur in="noise" stdDeviation="1.2" result="soft" />
+        <feDisplacementMap in="SourceGraphic" in2="soft" scale="22" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+    </defs>
+  </svg>
+
+  <div class="app">
+    <!-- 中间那层光斑（.caustics）：因观感发脏 + 白给合成开销，已整层停用（见 style.css ④）。
+       留个空元素占位，想加回颗粒/光斑只改 style.css 里那一条 display。 -->
+  <div class="grain" aria-hidden="true"></div>
+
+    <!-- 自绘浮层提示（M5.6 主人 2 号）：替代原生 title 的黑框，默认落在目标的右上方 -->
+    <div class="tip" id="tip" hidden></div>
+
+    <header class="titlebar">
+      <!-- 拖动区从顶部下移 5px：把最上沿让给缩放手柄，顶边也能拉伸窗口 -->
+      <div class="tb-drag" aria-hidden="true"></div>
+      <div class="tb-brand">
+        <span class="tb-dot"></span>
+        <span class="tb-title">Nami Time</span>
+      </div>
+      <div class="tb-actions">
+        <button class="glass-btn" id="btnCfg" title="显示设置">⚙︎</button>
+        <button class="glass-btn" id="btnTheme" title="切换外观">☾</button>
+        <!-- M8（主人 8 号）：全屏（再点一次退出；全屏时图标换成收回的样子） -->
+        <button class="glass-btn" id="btnFull" title="全屏" aria-pressed="false">⤢</button>
+        <!-- 第 28 轮（主人）：后台运行 —— 关掉界面，采集进程留在托盘继续记录 -->
+        <button class="glass-btn" id="btnBackground" title="后台运行（关掉界面，继续记录）">⤓</button>
+        <button class="glass-btn" id="btnMin" title="最小化">–</button>
+        <button class="glass-btn danger" id="btnClose" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="rail">
+        <div class="rail-top">
+          <!-- 分类由 app.js 渲染：全部应用 + 各个分类（右侧显示当前范围的合计） -->
+          <nav class="rail-nav" id="railNav"></nav>
+          <button class="rail-add" id="btnNewCat">＋ 新建分类</button>
+          <button class="rail-add ghost" id="btnGameTpl">🎮 一键启用游戏模板</button>
+        </div>
+        <div class="rail-mid">
+          <!-- 左栏原来空着的那块（M5.5）：做成「能点着跳日期」的最近几周热力图 -->
+          <div class="heat" id="heat">
+            <div class="heat-head">
+              <button class="heat-chev" id="heatPrev" title="往前 4 周">‹</button>
+              <span class="heat-t" id="heatTitle">最近 4 周</span>
+              <button class="heat-chev" id="heatNext" title="往后 4 周">›</button>
+              <span class="heat-s" id="heatSum"></span>
+            </div>
+            <div class="heat-wd" id="heatWd"></div>
+            <div class="heat-grid" id="heatGrid"></div>
+          </div>
+        </div>
+        <div class="rail-foot">
+          <div class="live" id="live">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span class="live-text" id="liveText">正在记录…</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <!-- M7 S7.3 首次运行一句话引导：只弹一次，点「知道了」写库，之后再启动就不弹 -->
+        <div class="hello" id="hello" hidden>
+          <span class="hello-t">我从现在开始记录你的前台窗口，数据只存在本机 · 关掉界面我也会待在托盘里继续记录</span>
+          <button class="mini" id="helloOk">知道了</button>
+        </div>
+
+        <div class="datenav glass-pill">
+          <button class="chev" id="prevDay" title="上一个">‹</button>
+          <button class="datelabel" id="dateLabel">今天</button>
+          <button class="chev" id="nextDay" title="下一个">›</button>
+        </div>
+
+        <section class="calpop" id="calpop" hidden>
+          <div class="cal-head">
+            <button class="chev" id="calPrev" title="上一个月">‹</button>
+            <button class="cal-title" id="calTitle">2026年10月</button>
+            <button class="chev" id="calNext" title="下一个月">›</button>
+          </div>
+          <div class="cal-week" id="calWeek">
+            <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+          </div>
+          <div class="cal-grid" id="calGrid"></div>
+          <div class="cal-foot">
+            <button class="cal-back" id="calToday">回到今天</button>
+            <span class="cal-hint" id="calHint">点标题切换整年</span>
+          </div>
+        </section>
+
+        <div class="segmented" id="seg">
+          <div class="seg-thumb" id="segThumb" aria-hidden="true"></div>
+          <button data-kind="day" class="active">单日</button>
+          <button data-kind="week">一周</button>
+          <button data-kind="month">一月</button>
+          <button data-kind="all">全部</button>
+        </div>
+
+        <!-- 最近 7 天概览（M5.5）：仿苹果「屏幕时间」主页 —— 逐日堆叠柱 + 24 小时按分类堆叠 -->
+        <section class="ov" id="ov">
+          <div class="ov-head">
+            <span class="h2" id="ovTitle">最近 7 天</span>
+            <span class="ov-sub" id="ovSub"></span>
+            <!-- M8（主人 5 号）：概览卡的 7 天窗口按周前后翻，不再被「点哪根柱子」牵着走 -->
+            <span class="ov-page">
+              <button class="ov-chev" id="ovPrev" title="往前一周">‹</button>
+              <button class="ov-chev" id="ovNext" title="往后一周">›</button>
+            </span>
+            <button class="ov-caret" id="ovCaret" title="收起 / 展开概览" aria-expanded="true">⌃</button>
+          </div>
+          <div class="ov-body" id="ovBody">
+            <div class="ov-panel">
+              <!-- M9（主人 2026-10-16）：悬停看「空闲」的定义（浮层按换行区分行，每行都短） -->
+              <div class="ov-cap" data-tip="空闲 = 连续 2 分钟没有键鼠操作&#10;从你停手那一刻开始算&#10;桌面 / UAC 这类没有前台窗口也算&#10;空闲不属于任何应用&#10;锁屏与休眠单独统计"><span>逐日</span><span class="ov-u">应用 + 空闲 + 锁屏 / 休眠</span></div>
+              <div class="plot" id="ovDayPlot"></div>
+            </div>
+            <div class="ov-panel">
+              <div class="ov-cap"><span>24 小时</span><span class="ov-u" id="ovHourCap">平均每天 · 按分类</span></div>
+              <div class="plot" id="ovHourPlot"></div>
+            </div>
+          </div>
+          <div class="ov-legend" id="ovLegend"></div>
+        </section>
+
+        <div class="section-head">
+          <span class="h2" id="listTitle">最常用</span>
+          <div class="head-right">
+            <span class="hint" id="rangeHint"></span>
+            <!-- 应用视图 ⇄ 分类视图（F4） -->
+            <div class="segmented small" id="viewSeg">
+              <div class="seg-thumb" aria-hidden="true"></div>
+              <button data-view="app" class="active">应用</button>
+              <button data-view="cat">分类</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-shell">
+          <div class="card" id="list"></div>
+        </div>
+        <div class="footnote" id="foot"></div>
+      </main>
+    </div>
+
+    <!-- 归类到…（M3 · S3.2）：点应用行末尾的 … 弹出，位置跟着那一行 -->
+    <section class="catpop" id="catPop" hidden>
+      <div class="pop-title" id="catPopTitle">归类到…</div>
+      <div class="cat-list" id="catPopList"></div>
+      <div class="pop-foot">
+        <button class="pop-link" id="catPopAuto">恢复自动归类</button>
+        <button class="pop-link" id="catPopNew">＋ 新建分类</button>
+      </div>
+      <!-- M7 主人第 6 条：图标自定义（挑一张图盖掉这个应用的全部日期 / 恢复自动抓的） -->
+      <div class="pop-foot">
+        <button class="pop-link" id="catPopIcon">自定义图标…</button>
+        <button class="pop-link" id="catPopIconClear">恢复自动图标</button>
+      </div>
+      <!-- M8 主人第 9 条：软件名自定义（右键软件 / 行尾 … 都能进来） -->
+      <div class="pop-foot">
+        <button class="pop-link" id="catPopRename">自定义名称…</button>
+        <button class="pop-link" id="catPopRenameClear">恢复自动名称</button>
+      </div>
+      <div class="pop-rename" id="catPopRenameRow" hidden>
+        <input class="txt" id="catPopNameIn" maxlength="40" spellcheck="false" placeholder="给这个应用起个名字…">
+        <button class="mini primary" id="catPopNameOk">改名</button>
+      </div>
+      <div class="pop-hint" id="catPopNote">手动归过类的应用，自动规则就不再插手（手动优先）</div>
+    </section>
+
+    <!-- 分类编辑器（M3 · S3.1 / S3.3）：名字 + 颜色 + 自动规则 -->
+    <section class="catedit" id="catEdit" hidden>
+      <div class="sheet-title" id="catEditTitle">新建分类</div>
+      <div class="sheet-row">
+        <span class="sheet-label">名字</span>
+        <input class="txt" id="catName" type="text" maxlength="24" placeholder="例如：游戏" />
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">颜色</span>
+        <div class="swatches" id="catSwatches"></div>
+      </div>
+      <div class="rule-block">
+        <div class="sheet-title plain">自动归类规则</div>
+        <div class="rule-list" id="catRules"></div>
+        <div class="rule-add">
+          <select class="pick" id="ruleKind" aria-label="规则类型">
+            <option value="exe">exe 名</option>
+            <option value="path">路径</option>
+            <option value="title">标题正则</option>
+          </select>
+          <input class="txt" id="rulePat" type="text" placeholder="例如 *\steamapps\common\*" />
+          <button class="mini" id="ruleAddBtn">添加</button>
+        </div>
+        <div class="rule-hint" id="ruleHint"></div>
+      </div>
+      <div class="edit-foot">
+        <button class="mini danger" id="catDelBtn">删除分类</button>
+        <span class="edit-right">
+          <button class="mini" id="catCancel">取消</button>
+          <button class="mini primary" id="catOk">保存</button>
+        </span>
+      </div>
+      <div class="sheet-note" id="catNote"></div>
+    </section>
+
+    <!-- 应用详情页（M5 · F5）：点应用行进入；逐日小柱图 + 首/末次使用 + 日均 + 分类 + 当前图标 -->
+    <section class="detail" id="detail" hidden>
+      <div class="dt-top">
+        <button class="dt-back" id="dtBack" title="返回列表">‹ 返回</button>
+        <!-- 详情页自带范围切换（M5.5）：不用回主页切，进来看就是「最近 7 天」 -->
+        <div class="segmented small" id="dtSeg">
+          <div class="seg-thumb" aria-hidden="true"></div>
+          <button data-kind="d7" class="active">7 天</button>
+          <button data-kind="d30">30 天</button>
+          <button data-kind="all">全部</button>
+        </div>
+        <span class="hint dt-rangehint" id="dtRange"></span>
+      </div>
+      <div class="dt-hero">
+        <div class="dt-ico" id="dtIco"></div>
+        <div class="dt-id">
+          <div class="dt-name" id="dtName">—</div>
+          <div class="dt-path" id="dtPath"></div>
+          <div class="dt-tags" id="dtTags"></div>
+          <div class="dt-iconrow" id="dtIconRow"></div>
+        </div>
+        <div class="dt-big">
+          <span class="dt-total" id="dtTotal">0 分钟</span>
+          <span class="dt-total-l" id="dtTotalL">本范围合计</span>
+        </div>
+      </div>
+      <div class="dt-stats" id="dtStats"></div>
+      <div class="dt-charts">
+        <div class="dt-chart-card">
+          <div class="dt-chart-head">
+            <span class="h2">每日时长</span>
+            <span class="dt-legend" id="dtLegend"></span>
+          </div>
+          <div class="dt-chart plot" id="dtChart"></div>
+          <div class="dt-chart-note" id="dtChartNote"></div>
+        </div>
+        <div class="dt-chart-card">
+          <div class="dt-chart-head">
+            <span class="h2">时段分布</span>
+            <span class="dt-legend" id="dtHoursLegend"></span>
+          </div>
+          <div class="dt-chart plot" id="dtHours"></div>
+          <div class="dt-chart-note" id="dtHoursNote"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sheet" id="sheet" hidden>
+      <div class="sheet-title">显示设置</div>
+      <div class="sheet-row">
+        <span class="sheet-label">玻璃通透度</span>
+        <div class="slider-wrap">
+          <span class="slider-end">更透</span>
+          <input class="slider" id="glassSlider" type="range" min="0" max="100" step="1" value="55" autocomplete="off" aria-label="玻璃通透度" />
+          <span class="slider-end">更清楚</span>
+        </div>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">图标大小</span>
+        <div class="slider-wrap">
+          <span class="slider-end">更小</span>
+          <input class="slider" id="iconSlider" type="range" min="0" max="100" step="1" value="46" autocomplete="off" aria-label="图标大小（倍率）" />
+          <span class="slider-end">更大</span>
+        </div>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">外观</span>
+        <div class="segmented small" id="themeSeg">
+          <div class="seg-thumb" aria-hidden="true"></div>
+          <button data-theme="light" class="active">浅色</button>
+          <button data-theme="dark">深色</button>
+          <button data-theme="auto">跟随系统</button>
+        </div>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">自动归类</span>
+        <div class="switch-wrap">
+          <button class="switch on" id="swRules" role="switch" aria-checked="true" aria-label="自动归类规则"></button>
+          <span class="switch-hint" id="swRulesHint">规则自动归类已开启</span>
+        </div>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">定期备份</span>
+        <div class="switch-wrap">
+          <button class="switch on" id="swBackup" role="switch" aria-checked="true" aria-label="定期备份"></button>
+          <span class="switch-hint" id="backupHint">每周自动存一份满血备份 + ManicTime 兼容 csv + 一张概览图</span>
+        </div>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">开机自启</span>
+        <div class="switch-wrap">
+          <button class="switch on" id="swAutostart" role="switch" aria-checked="true" aria-label="开机自动启动"></button>
+          <span class="switch-hint" id="autostartHint">开机后自动开始记录（启动文件夹快捷方式）</span>
+        </div>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">备份</span>
+        <!-- M8（主人 8 号）：三个按钮以前是 nowrap，右边那个被设置面板裁掉了 → 允许换行 + 缩短文案 -->
+        <div class="switch-wrap wrap">
+          <button class="mini" id="btnBackupNow">立即备份</button>
+          <button class="mini" id="btnBackupOpen">打开目录</button>
+          <button class="mini" id="btnBackupImage">概览图</button>
+        </div>
+      </div>
+      <div class="sheet-note" id="backupNote"></div>
+      <div class="sheet-note" id="sheetNote"></div>
+    </section>
+
+    <!-- M8（主人 6 号）：分类右键菜单 —— 建完就能改：重命名 / 换颜色 / 规则 / 删除 -->
+    <section class="catmenu" id="catMenu" hidden>
+      <div class="pop-title" id="catMenuTitle">分类</div>
+      <div class="cm-rename">
+        <input class="txt" id="catMenuName" type="text" maxlength="24" autocomplete="off" aria-label="分类名字" />
+        <button class="mini primary" id="catMenuNameOk">改名</button>
+      </div>
+      <div class="cm-sw" id="catMenuColors"></div>
+      <button class="cm-item" id="catMenuRules">自动归类规则…</button>
+      <button class="cm-item danger" id="catMenuDel">删除分类</button>
+    </section>
+  </div>
+  <!-- 自绘缩放边框：frame:false + thickFrame:false 时 Windows 不保留非客户区
+       （所以没有那圈裸亚克力），代价是没有原生缩放边框。这 8 个透明手柄 + setBounds()
+       自己实现缩放，外观一点不变，四角仍与窗口圆角同心。 -->
+  <div class="rz" aria-hidden="true">
+    <i class="rz-n"></i><i class="rz-s"></i><i class="rz-w"></i><i class="rz-e"></i>
+    <i class="rz-nw"></i><i class="rz-ne"></i><i class="rz-sw"></i><i class="rz-se"></i>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+{
+  "name": "nami-time",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nami Time —— 极简的 Windows 前台应用时长记录器",
+  "author": "Masahiro",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
+    "dist:installer": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "koffi": "^3.3.3"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "koffi@3.3.3": true
+  },
+  "build": {
+    "appId": "com.masahiro.namitime",
+    "productName": "Nami Time",
+    "copyright": "Copyright © 2026 Masahiro",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/*.md"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/koffi/**"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "portable": {
+      "artifactName": "NamiTime-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nami Time",
+      "artifactName": "NamiTime-${version}-setup.exe",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

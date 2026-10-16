@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+
+# 打包产物（96 MB 的 exe，别进库；靠 `npm run dist` 现打）
+dist/
+
+# 开发期的临时脚本 / QA 截图 / 影子数据库（里面可能有真数据的副本，一律不进库）
+work/
+
+# 备份与日志
+*.log
+*.bak
+开发交接.md.*.bak
+
+# 系统杂物
+Thumbs.db
+Desktop.ini
+.DS_Store
