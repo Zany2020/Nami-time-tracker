@@ -5,6 +5,8 @@
 替代 ManicTime 的自用小工具：每秒采样一次前台窗口，告诉你「时间都去哪了」。
 Electron + 原生 HTML/CSS/JS，零框架、零运行时依赖（原生模块只有 koffi 与 Node 内置的 `node:sqlite`）。
 
+**下载**：[最新版 Release](https://github.com/Zany2020/Nami-time-tracker/releases/latest) —— 便携版（双击即用）或安装版（带快捷方式与卸载入口）。
+
 ![主界面](docs/screenshot-main.png)
 
 ## 功能
