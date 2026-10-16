@@ -16,3 +16,6 @@ work/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# 开发交接稿（含本机路径与真实使用统计，公开仓库不收录）
+开发交接.md
