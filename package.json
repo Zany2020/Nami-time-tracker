@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Nami Time —— 极简的 Windows 前台应用时长记录器",
+  "license": "MIT",
   "author": "Masahiro",
   "main": "src/main/main.js",
   "scripts": {

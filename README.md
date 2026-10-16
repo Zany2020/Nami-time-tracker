@@ -75,16 +75,15 @@ NSIS 走非一键模式、允许改安装目录、`deleteAppDataOnUninstall: fal
 
 ```
 nami-time/
-  package.json          scripts.start / 第 35 轮加的 build 段
+  package.json          scripts.start + build 段（electron-builder）
   启动 Nami Time.bat     源码入口（双击这个）
   assets/               图标（icon.png / icon.ico / tray.png）
   src/main/             主进程、preload、窗口圆角与深色标题栏
   src/collector/        koffi 取前台窗口、node:sqlite 存取、图标缓存、采集循环、ManicTime 导入
   src/ui/               index.html / style.css / app.js（无框架）
   tools/                数据自检与探针小工具
-  开发交接.md            开发过程与决策记录（含每一轮改动、踩过的坑）
 ```
 
 ## 许可证
 
-待定（作者尚未选定）。
+[MIT](LICENSE) © 2026 Zany2020 —— 随便用、随便改、随便发，保留版权声明即可。
