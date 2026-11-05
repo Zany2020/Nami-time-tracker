@@ -1025,6 +1025,10 @@ html.no-fx .detail{animation:none}
 .px{height:var(--px);line-height:var(--px);font-size:9.5px;color:var(--text3);text-align:center;white-space:nowrap}
 .px.hide{visibility:hidden}
 .px.today{color:var(--text2);font-weight:600}
+/* 第 37 轮（主人 1/2 号）：详情页「每日时长」/ 概览卡「最近 7 天」里正在看的那一天，
+   用一圈细描边标出来；右侧 24 小时图跟它联动。 */
+.pbar.sel .pst{box-shadow:0 0 0 1.5px var(--accent), 0 4px 12px rgb(46 107 168 / .22)}
+.pbar.sel .px{color:var(--accent);font-weight:600}
 
 /* ============================================================
    M5.5 ② 详情页：页内范围切换 + 双栏（逐日 / 时段分布）

@@ -369,6 +369,29 @@ function hourBuckets(rows, fromMs, toMs) {
   }
   return h;
 }
+
+/* 第 37 轮（主人 1/2 号）：详情页与主页概览的「时段分布」都改成「看某一天」。
+   这里一次把片段铺成 { 'YYYY-MM-DD': [24 个秒数] }，前端点柱子切换日期时不用再跑 IPC。
+   只保留真的有秒数的天；跨午夜的长段会按本地日期拆到两天。 */
+function hourBucketsByDay(rows, fromMs, toMs) {
+  const out = new Map();
+  for (const r of rows) {
+    let s = Math.max(r.start_ts, fromMs), e = Math.min(r.end_ts, toMs);
+    while (s < e) {
+      const d = new Date(s);
+      const next = new Date(d); next.setMinutes(60, 0, 0);
+      const cut = Math.min(e, next.getTime());
+      const k = dayKey(d);
+      let h = out.get(k);
+      if (!h) { h = new Array(24).fill(0); out.set(k, h); }
+      h[d.getHours()] += (cut - s) / 1000;
+      s = cut;
+    }
+  }
+  const obj = {};
+  for (const [k, h] of out) obj[k] = h.map((v) => Math.round(v));
+  return obj;
+}
 const daySpan = (from, to) => { let n = 0; for (let d = from; d && d <= to; d = addDays(d, 1)) n++; return Math.max(1, n); };
 
 function resolveRange(kind, anchor) {
@@ -1136,6 +1159,9 @@ app.whenReady().then(async () => {
       customIcon: !!store.customIcon(id),
       days: series.days, clipped: series.clipped, spanDays: series.spanDays,
       hours: hourBuckets(hRows, hFromMs, hToMs),   // 24 桶（秒）= 本范围真实合计（M7 起界面不再除天数）
+      /* 第 37 轮：单日 24 桶。界面右侧「时段分布」默认看范围最后一天（默认今天），
+         点左边每日柱就切到那一天 —— 不再显示「跨天平均」。 */
+      hoursByDay: hourBucketsByDay(hRows, hFromMs, hToMs),
       hoursFrom: hFrom, hoursDays: daySpan(hFrom, r.to), hoursSegs: hRows.length,
       total: daily.reduce((s, x) => s + (x.seconds || 0), 0),
       idleParts: store.idleByKind(r.from, r.to),
@@ -1189,8 +1215,14 @@ app.whenReady().then(async () => {
     if (otherTotal > 0) legend.push({ id: 0, name: '其他', color: null, sec: otherTotal });
     const keep = new Set(top.map(([id]) => id));
 
+    /* 第 37 轮（主人 2 号）：右侧 24 小时图改成「看某一天」。
+       一次把窗口内的片段同时铺成「整窗口 24 桶」和「每天 24 桶」，
+       前端点左边逐日柱时直接换一份数据重画，不用再跑 IPC。 */
     const perApp = new Map();
+    const dayMaps = new Map();
     for (const r of rows) {
+      const cid = oneCatOf(r.app_id);
+      const key = (cid && keep.has(cid)) ? ('c' + cid) : 'o';
       let hb = perApp.get(r.app_id);
       if (!hb) { hb = new Array(24).fill(0); perApp.set(r.app_id, hb); }
       let s = Math.max(r.start_ts, firstMs), e = Math.min(r.end_ts, lastMs);
@@ -1198,7 +1230,13 @@ app.whenReady().then(async () => {
         const d = new Date(s);
         const next = new Date(d); next.setMinutes(60, 0, 0);
         const cut = Math.min(e, next.getTime());
-        hb[d.getHours()] += (cut - s) / 1000;
+        const sec = (cut - s) / 1000;
+        hb[d.getHours()] += sec;
+        const dk = dayKey(d);
+        let arr = dayMaps.get(dk);
+        if (!arr) { arr = Array.from({ length: 24 }, () => new Map()); dayMaps.set(dk, arr); }
+        const m = arr[d.getHours()];
+        m.set(key, (m.get(key) || 0) + sec);
         s = cut;
       }
     }
@@ -1210,10 +1248,15 @@ app.whenReady().then(async () => {
     }
     const hours = hm.map((m) => [...m.entries()].map(([k, s]) => ({ k, s: Math.round(s) })).sort((p, q2) => q2.s - p.s));
     const hourMax = hours.reduce((m, segs) => Math.max(m, segs.reduce((s, x) => s + x.s, 0)), 0);
+    const hoursByDay = {};
+    for (const [dk, arr] of dayMaps) {
+      hoursByDay[dk] = arr.map((m) => [...m.entries()].map(([k, s]) => ({ k, s: Math.round(s) }))
+        .filter((x) => x.s > 0).sort((p, q2) => q2.s - p.s));
+    }
 
     return {
       ok: true, from, to, days: list, total, avg, maxDay,
-      hours, hourMax, hoursDays: daySpan(from, to), legend,
+      hours, hoursByDay, hourMax, hoursDays: daySpan(from, to), legend,
       /* M9（主人 2026-10-16）：24 小时图改成「平均一天」，分母必须和 avg 的活跃天数一致 */
       activeN,
       segs: rows.length, firstDay: store.firstDay(), today: dayKey()

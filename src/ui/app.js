@@ -132,6 +132,7 @@ function weekEnd(d) {
 /* ============================================================
    分段控件：完美对称的椭圆玻璃滑块（可拖拽 + 弹性滑动）
    ============================================================ */
+const SEGS = [];   // 第 37 轮：所有分段控件实例，窗口缩放后统一重新测量
 function initSegmented(root, onPick, opts) {
   const thumb = root.querySelector('.seg-thumb');
   const btns = Array.from(root.querySelectorAll('button'));
@@ -165,10 +166,21 @@ function initSegmented(root, onPick, opts) {
     const tx = clamp(cx - geom.w / 2, lo, hi);
     thumb.style.setProperty('--tx', tx.toFixed(1) + 'px');
   }
-  function snapToActive() {
+  function snapToActive(force) {
     const b = root.querySelector('button.active') || btns[0];
     if (!b) return;
-    if (opts && opts.position === false) {   // 详情页在浮层里，隐藏时量不出宽度
+    if (opts && opts.position === false && !force) {   // 详情页在浮层里，隐藏时量不出宽度
+      thumb.style.setProperty('--tx', '');
+      thumb.style.setProperty('--tw', '');
+      thumb.style.setProperty('--th', '');
+      return;
+    }
+    /* 第 37 轮修复（主人 3 号）：refresh() 以前也会走上面那个 position:false 分支，
+       于是详情页的滑块**从来没有被真正测量过** —— 打开详情页看到的就是一颗错位的旧胶囊。
+       现在 refresh() 强制测量；但根元素还没布局（hidden / display:none）时宽高为 0，
+       这时必须继续清空，否则会把 0 尺寸写进 --tw/--th。 */
+    const rr = root.getBoundingClientRect();
+    if (!rr.width || !rr.height) {
       thumb.style.setProperty('--tx', '');
       thumb.style.setProperty('--tw', '');
       thumb.style.setProperty('--th', '');
@@ -220,11 +232,11 @@ function initSegmented(root, onPick, opts) {
     root.classList.remove('dragging');
     try { root.releasePointerCapture(e.pointerId); } catch {}
     active(key);
-    snapToActive();
+    snapToActive(true);
     if (onPick) onPick(key, { dragged: wasDrag });
   };
   root.addEventListener('pointerup', finish);
-  root.addEventListener('pointercancel', (e) => { if (drag) { drag = null; root.classList.remove('dragging'); snapToActive(); } });
+  root.addEventListener('pointercancel', (e) => { if (drag) { drag = null; root.classList.remove('dragging'); snapToActive(true); } });
   // 键盘：左右方向键切换
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -233,10 +245,12 @@ function initSegmented(root, onPick, opts) {
     if (n === i) return;
     e.preventDefault();
     active(keyOf(btns[n]));
-    snapToActive();
+    snapToActive(true);
     if (onPick) onPick(keyOf(btns[n]), { key: true });
   });
-  return { sync: (key) => { active(key); snapToActive(); }, refresh: snapToActive };
+  const api = { sync: (key) => { active(key); snapToActive(true); }, refresh: () => snapToActive(true) };
+  SEGS.push(api);
+  return api;
 }
 
 const segKind = initSegmented($('#seg'), (kind) => {
@@ -296,8 +310,8 @@ function initResize(info) {
     try { job.el.releasePointerCapture(e.pointerId); } catch (_) {}
     job = null;
     document.documentElement.classList.remove('resizing');
-    segKind.refresh();
-    segTheme.refresh();
+    /* 第 37 轮：窗口尺寸变了，所有分段控件的滑块都要重新量（包括详情页那一条） */
+    for (const s of SEGS) s.refresh();
   };
   window.addEventListener('pointerup', finish);
   window.addEventListener('pointercancel', finish);
@@ -350,6 +364,10 @@ let ovSig = '', heatSig = '';
    点 ‹ › 按周前后翻，不再跟着 state.anchor 走（不然点一根柱子那天就变成窗口最后一天，回不去）。
    null = 收口到「到今天为止」，不为空时它就是窗口的最后一天。 */
 let ovEnd = null;
+/* 第 37 轮（主人 2 号）：右侧 24 小时图改成「看某一天」，默认 = 窗口最后一天（默认今天）。
+   null = 没手动选过，跟着窗口走；点左边逐日柱就把它钉在那一天。 */
+let ovHourDay = null;
+let ovData = null;      // 最近一次 overview 的原始数据（点柱子切换日期时重画用）
 /* M8（主人 4 号）：热力图的窗口同理 —— null = 本周（最近 4 周），否则存窗口最后一天（周日）。 */
 let heatEnd = null;
 const OV_DAYS = 7;
@@ -361,6 +379,10 @@ async function renderOverview() {
   const end = ovEnd || today;
   const o = await window.nami.overview({ anchor: end, days: OV_DAYS });
   if (!o || o.ok === false) return;
+  /* 第 37 轮：右侧默认看窗口最后一天（「最近 7 天」时就是今天）；手动点过就保持那天。 */
+  const hourDay = (ovHourDay && o.days.some((x) => x.day === ovHourDay)) ? ovHourDay : o.to;
+  ovHourDay = hourDay;
+  ovData = o;
   const sig = o.from + '|' + o.to + '|' + o.total + '|' + o.avg + '|' +
     o.days.map((x) => x.sec + ':' + x.idle + ':' + x.lock + ':' + x.sleep).join(',') + '|' +
     o.hours.map((h) => h.map((s) => s.k + s.s).join('.')).join(',') + '|' +
@@ -375,7 +397,7 @@ async function renderOverview() {
       '\n' + WD[d.getDay()] + '\n合计 ' + fmtDur(x.sec) +
       (x.idle ? '\n空闲 ' + fmtDur(x.idle) : '') + (x.lock ? '\n锁屏 ' + fmtDur(x.lock) : '') + (x.sleep ? '\n休眠 ' + fmtDur(x.sleep) : '');
     return {
-      tip, cls: x.day === o.today ? 'today' : '', day: x.day,
+      tip, cls: [x.day === o.today ? 'today' : '', x.day === hourDay ? 'sel' : ''].filter(Boolean).join(' '), day: x.day,
       parts: [
         { cls: 's-sleep', sec: x.sleep }, { cls: 's-lock', sec: x.lock },
         { cls: 's-idle', sec: x.idle }, { cls: 's-use', sec: x.sec }
@@ -388,40 +410,46 @@ async function renderOverview() {
     cls: o.days[i].day === o.today ? 'today' : ''
   }));
   renderPlotArea($('#ovDayPlot'), { bars, max: maxDay, avg: o.avg, xLabels: xD, y1Label: fmtShort(maxDay) || '0', y0Label: '0' });
-  const cName = new Map((o.legend || []).map((l) => ['c' + l.id, l]));
-  /* M9（主人 2026-10-16）：和详情页「时段分布」同一口径 —— 柱子画「平均一天里的这个小时」。
-     以前画的是整个窗口的合计，7 天窗口里一根柱子能顶到 5 小时，读起来像「这个小时用了 5 小时」。
-     分母是活跃天数（和 #ovSub 的日均同一个），24 根加起来正好 = 日均；只有 1 个活跃天时与合计等价。
-     柱子高度的比例没动（仍按窗口内的 hourMax 换算），变的只是纵轴刻度与文案。 */
-  const hMax = Math.max(1, o.hourMax);
-  const hDays = Math.max(1, o.hoursDays || 1);
-  const hAct = Math.max(1, o.activeN || hDays);
-  const hourBars = (o.hours || []).map((segs, h) => {
-    const list = segs.slice().sort((p, q) => (p.k === 'o' ? 1 : q.k === 'o' ? -1 : q.s - p.s));
-    const sum = segs.reduce((s, x) => s + x.s, 0);
-    const lab = String(h).padStart(2, '0');
-    const tip = lab + ':00 – ' + lab + ':59\n日均 ' + fmtDur(Math.round(sum / hAct)) +
-      (hAct > 1 ? '（' + hAct + ' 个活跃天合计 ' + fmtDur(Math.round(sum)) + '）' : '');
-    const parts = [];
-    for (const s of list) {
-      const item = cName.get(s.k);
-      const col = s.k === 'o' ? 'rgb(140 140 150 / .55)' : (item ? item.color : 'rgb(140 140 150 / .55)');
-      parts.push({ raw: 'height:' + (s.s / hMax * 100).toFixed(2) + '%;background:' + col });
-    }
-    if (!parts.length) parts.push({ raw: 'height:0' });
-    return { tip, parts };
-  });
-  renderPlotArea($('#ovHourPlot'), {
-    bars: hourBars, max: hMax, xLabels: hourXLabels(),
-    y1Label: fmtShort(hMax / hAct) || '0', y0Label: '0'
-  });
+  /* 第 37 轮（主人 2 号）：右侧 24 小时图不再画「平均一天」，改成「选中的那一天」。
+     主进程已经在 nami:overview 里把窗口按天分好桶（hoursByDay），点柱子切换零 IPC。 */
+  paintOverviewHours(o, hourDay);
   /* M8（主人 5 号）：窗口收口到今天 == 「最近 N 天」；翻到过去就报出这一段的日期区间 */
   $('#ovTitle').textContent = end >= today ? '最近 ' + o.days.length + ' 天' : shortMd(o.from) + ' – ' + shortMd(o.to);
   $('#ovSub').textContent = '合计 ' + fmtDur(o.total) + ' · 日均 ' + fmtDur(o.avg);
   $('#ovPrev').disabled = false;
   $('#ovNext').disabled = end >= today;
-  $('#ovHourCap').textContent = hDays > 1 ? '平均一天 · 按分类（活跃 ' + hAct + ' 天）' : '按分类';
   $('#ovLegend').innerHTML = (o.legend || []).map((l) => '<span><i style="background:' + esc(l.color || 'rgb(140 140 150 / .55)') + '"></i>' + esc(l.name) + ' <b>' + esc(fmtShort(l.sec) || '0分') + '</b></span>').join('');
+}
+
+/* 第 37 轮：概览卡右侧 = 某一天的 24 小时（按分类堆叠）。
+   数据和图例同一套 key：c<分类 id> / 'o'（其他），颜色沿用底部图例。 */
+function paintOverviewHours(o, day) {
+  const hours = (o && o.hoursByDay && o.hoursByDay[day]) ||
+    Array.from({ length: 24 }, () => []);
+  const cName = new Map((o.legend || []).map((l) => ['c' + l.id, l]));
+  const hMaxDay = Math.max(1, hours.reduce((m, segs) => Math.max(m, segs.reduce((s, x) => s + x.s, 0)), 0));
+  const hourBars = hours.map((segs, h) => {
+    const list = segs.slice().sort((p, q) => (p.k === 'o' ? 1 : q.k === 'o' ? -1 : q.s - p.s));
+    const sum = segs.reduce((s, x) => s + x.s, 0);
+    const lab = String(h).padStart(2, '0');
+    const parts = [];
+    for (const s of list) {
+      const item = cName.get(s.k);
+      const col = s.k === 'o' ? 'rgb(140 140 150 / .55)' : (item ? item.color : 'rgb(140 140 150 / .55)');
+      parts.push({ raw: 'height:' + (s.s / hMaxDay * 100).toFixed(2) + '%;background:' + col });
+    }
+    if (!parts.length) parts.push({ raw: 'height:0' });
+    return {
+      tip: lab + ':00 – ' + lab + ':59',
+      sub: sum ? '合计 ' + fmtDur(Math.round(sum)) : '没有记录',
+      cls: sum ? '' : 'zero', parts
+    };
+  });
+  renderPlotArea($('#ovHourPlot'), {
+    bars: hourBars, max: hMaxDay, xLabels: hourXLabels(),
+    y1Label: fmtShort(hMaxDay) || '0', y0Label: '0'
+  });
+  $('#ovHourCap').textContent = fmtDate(day) + (day === o.today ? ' · 今天' : '') + ' · 按分类';
 }
 
 /* 横轴标签：0 / 6 / 12 / 18 / 24 时（24 根柱子时才用） */
@@ -691,6 +719,7 @@ let detailKey = '';          // 详情数据指纹（范围 + 锚点），没变
 let dtKind = 'd7';           // M5.5：详情页自己的范围，默认最近 7 天
 let dtAnchor = '';           // 详情页锚点；空 = 跟主列表当前锚点
 let detailSeg = null;        // 详情页范围分段控件；openDetailAt 要 refresh 它，所以必须在这一层
+let dtHourDay = null;        // 第 37 轮：右侧「时段分布」正在看哪一天（null = 范围最后一天）
 
 const MAX_DETAIL_DAYS = 120;
 const fmtClock = (ts) => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
@@ -737,10 +766,10 @@ function paintDayChart() {
   const step = Math.max(1, Math.ceil(N / 8));      // 横轴最多标 8 个日期，多了会糊成一团
   const bars = view.map((x) => ({
     day: x.day,
-    tip: fmtDate(x.day) + (x.day === d.today ? ' 今天' : ''),
+    tip: fmtDate(x.day) + (x.day === d.today ? ' 今天' : '') + '\n点一下看这天的时段分布',
     sub: ['本应用 ' + fmtDur(x.sec), x.idle ? '空闲 ' + fmtDur(x.idle) : '',
       x.lock ? '锁屏 ' + fmtDur(x.lock) : '', x.sleep ? '休眠 ' + fmtDur(x.sleep) : ''].filter(Boolean).join('\n'),
-    cls: (x.sec + x.idle + x.lock + x.sleep) ? '' : 'zero',
+    cls: [(x.sec + x.idle + x.lock + x.sleep) ? '' : 'zero', x.day === dtHourDay ? 'sel' : ''].filter(Boolean).join(' '),
     parts: [
       { cls: 's-sleep', sec: x.sleep }, { cls: 's-lock', sec: x.lock },
       { cls: 's-idle', sec: x.idle }, { cls: 's-use', sec: x.sec }
@@ -760,8 +789,10 @@ function paintDayChart() {
   const note = [];
   if (pannable) {
     note.push('这一段显示 ' + fmtDate(view[0].day) + ' – ' + fmtDate(view[N - 1].day) + '（共 ' + n +
-      ' 天）· 按住柱子左右拖动看更早的；点柱子跳到那天的记录。');
+      ' 天）· 按住柱子左右拖动看更早的。');
   } else if (d.clipped) note.push('范围太长，只画最近 ' + n + ' 天。');
+  /* 第 37 轮：点柱子不再是「跳回主页」，而是把右边「时段分布」切到那一天 —— 这里得说清楚。 */
+  note.push('点柱子看这天的时段分布。');
   note.push('柱高 = 当天「本应用 + 空闲 + 锁屏 / 休眠」合计，虚线 = 平均一天的合计高度；空闲与锁屏是全系统合计，不属于该应用本身。');
   $('#dtChartNote').textContent = note.join(' ');
 }
@@ -795,9 +826,40 @@ function bindDetailChart() {
     const b = e.target.closest ? e.target.closest('[data-day]') : null;
     if (!b || detailApp === null) return;
     hideTip();
-    closeDetail();
-    pickDay(b.dataset.day);
+    /* 第 37 轮（主人 1 号）：点左边每日柱 = 右边时段分布切到那一天，
+       不再 closeDetail() + pickDay() 把主人踢回主页。 */
+    dtHourDay = b.dataset.day;
+    paintDayChart();
+    renderDetailHours(dtHourDay);
   });
+}
+
+/* 第 37 轮（主人 1 号）：详情页右侧「时段分布」= 某一天的 24 小时。
+   数据来自主进程的 hoursByDay（按天 × 小时预先分好桶），点柱子切换日期时零 IPC。 */
+function renderDetailHours(day) {
+  const d = detailData;
+  if (!d) return;
+  const hrs = (d.hoursByDay && d.hoursByDay[day]) || new Array(24).fill(0);
+  const total = hrs.reduce((s, x) => s + x, 0);
+  const hmax = Math.max(1, ...hrs);
+  $('#dtHoursLegend').innerHTML = '<span class="lg-use">本应用</span><span class="dt-hu">' +
+    esc(fmtDate(day)) + (day === d.today ? ' · 今天' : '') + '</span>';
+  if (!d.hoursSegs) {
+    $('#dtHours').innerHTML = '<div class="empty">这段时间还没有逐秒片段喵~<br>（早于采集器的记录只有按天汇总）</div>';
+    $('#dtHoursNote').textContent = '时段分布需要原始片段；更早的历史只有按天汇总。';
+    return;
+  }
+  const hbars = hrs.map((s, h) => {
+    const lab = String(h).padStart(2, '0');
+    return {
+      tip: lab + ':00 – ' + lab + ':59',
+      sub: '本小时 ' + fmtDur(Math.round(s)),
+      cls: s ? '' : 'zero', parts: [{ cls: 's-use', sec: s }]
+    };
+  });
+  renderPlotArea($('#dtHours'), { bars: hbars, max: hmax, xLabels: hourXLabels(), y1Label: fmtShort(hmax) || '0', y0Label: '0' });
+  $('#dtHoursNote').textContent = '柱子 = 这一天里「第几小时」用了多久（合计 ' + fmtDur(Math.round(total)) +
+    '）。点左边「每日时长」的柱子可以切换日期。';
 }
 
 function renderDetail(d) {
@@ -858,43 +920,16 @@ function renderDetail(d) {
   if (dtWin.key !== wkey) { dtWin.key = wkey; dtWin.off = Math.max(0, days.length - DT_WIN); }
   /* 主人在意的是「这个应用本范围日均用了多久」，所以数字用本应用口径（和概览卡 #ovSub 一致） */
   $('#dtTotalL').textContent = '本范围合计 · 日均 ' + (fmtShort(avg) || '0分');
+  /* 第 37 轮：右侧「时段分布」默认 = 范围最后一天（默认今天）。必须**在画柱图之前**定下来，
+     左边那根柱子的选中描边才知道画在哪一天。 */
+  if (!dtHourDay || !days.some((x) => x.day === dtHourDay)) dtHourDay = d.to || d.today;
   paintDayChart();
 
-  /* 时段分布：24 小时 = 「平均一天」的样子（M9 · 主人 2026-10-16）。
-     历史：M7 那版柱子画「本范围真实合计」，因为更早的版本除以**日历天数**会把
-     「7 天里只用过 1 天」压成 1/7（今天用了 1 小时，图里最高才 5 分）。
-     但合计口径在长范围里读不通：30 天窗口里 20:00–20:59 显示「3 小时 4 分钟」，
-     像在说「这个小时用了 3 小时」。现在柱子 = 该小时 ÷ **活跃天数**（和 hero「日均（按活跃天）」
-     同一个分母），纵轴是「一天里这个小时平均用多久」，24 根加起来正好 = 日均；
-     只有 1 个活跃天时与「合计」完全等价，T 字型两难的「1/7 压扁」也不会回来。
-     悬停仍然给合计。 */
-  const hrs = d.hours || [];
-  const hdiv = Math.max(1, d.hoursDays || 1);
-  const hAct = Math.max(1, active.length);          // 活跃天 = 有用量的天（hero 同一口径）
-  const hsum = hrs.reduce((s, x) => s + x, 0);
-  const hmax = Math.max(1, hrs.length ? Math.max(...hrs) / hAct : 0);
-  $('#dtHoursLegend').innerHTML = '<span class="lg-use">本应用</span><span class="dt-hu">' +
-    (hdiv > 1 ? '平均一天 · 活跃 ' + hAct + ' 天' : '当天') + '</span>';
-  if (!d.hoursSegs) {
-    $('#dtHours').innerHTML = '<div class="empty">这段时间还没有逐秒片段喵~<br>（早于采集器的记录只有按天汇总）</div>';
-    $('#dtHoursNote').textContent = '时段分布需要原始片段；更早的历史只有按天汇总。';
-  } else {
-    const hbars = hrs.map((s, h) => {
-      const lab = String(h).padStart(2, '0');
-      return {
-        tip: lab + ':00 – ' + lab + ':59',
-        sub: '日均 ' + fmtDur(Math.round(s / hAct)) +
-          (hAct > 1 ? '（' + hAct + ' 个活跃天合计 ' + fmtDur(Math.round(s)) + '）' : ''),
-        cls: s ? '' : 'zero', parts: [{ cls: 's-use', sec: s / hAct }]
-      };
-    });
-    renderPlotArea($('#dtHours'), { bars: hbars, max: hmax, xLabels: hourXLabels(), y1Label: fmtShort(hmax) || '0', y0Label: '0' });
-    const hn = ['柱子 = 一天里「第几小时」平均用了多久' +
-      (hsum > 0 ? '（日均共 ' + fmtDur(Math.round(hsum / hAct)) + '）' : '') + '。'];
-    if (hdiv > 1) hn.push('把 ' + hdiv + ' 天里本应用活跃的 ' + hAct + ' 天平摊成一天；悬停柱子看合计。');
-    if (d.kind === 'all') hn.push('「全部」只取最近 ' + MAX_DETAIL_DAYS + ' 天来画。');
-    $('#dtHoursNote').textContent = hn.join(' ');
-  }
+  /* 时段分布（第 37 轮 · 主人 1 号）：改成「看某一天」，默认 = 范围最后一天（默认今天）。
+     以前这里是整范围的「平均一天」：7 天窗口里每根柱子都被摊薄，30 天里还会把
+     「20:00–20:59 合计 3 小时」写得像「这个小时用了 3 小时」。
+     现在点左边「每日时长」的柱子就把右边切到那一天，不再关闭详情页 / 跳回主页。 */
+  renderDetailHours(dtHourDay);
 }
 
 function openDetail(appId, opts) {
@@ -922,7 +957,9 @@ async function openDetailAt(id, k, a, force) {
   el.hidden = false;
   document.body.classList.add('dt-open');
   el.scrollTop = 0;
-  if (detailSeg) requestAnimationFrame(() => detailSeg.refresh());
+  /* 第 37 轮：详情页刚取消 hidden 时布局还没稳定，单次 rAF 量到的按钮宽度是旧的
+     （主人截图里那个错位的白胶囊就是这么来的）→ 连等两帧再测。 */
+  if (detailSeg) requestAnimationFrame(() => requestAnimationFrame(() => detailSeg.refresh()));
 }
 function closeDetail() {
   if (detailApp === null) return;
@@ -1520,9 +1557,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     ovEnd = nx >= dayKey() ? null : nx;
     ovSig = ''; renderOverview();
   };
+  /* 第 37 轮（主人 2 号补充）：点概览逐日柱 = 右侧 24 小时切那天 **并且** 下面「最常用」也切那天。
+     顶部如果是「一月 / 一周 / 全部」，要先切回「单日」—— 否则主列表还是整月聚合，看不出变化。
+     热力图那边仍然是「点一下跳到那天」（它本来就是日期导航）。 */
   $('#ovDayPlot').addEventListener('click', (e) => {
     const b = e.target.closest('[data-day]');
-    if (b) { hideTip(); pickDay(b.dataset.day); }
+    if (!b || !ovData) return;
+    hideTip();
+    const day = b.dataset.day;
+    ovHourDay = day;
+    state.kind = 'day';
+    segKind.sync('day');
+    pickDay(day);                                   // 主列表 / 日期标题 / 页面统计一起切到那天
+    paintOverviewHours(ovData, day);                // 右侧 24 小时立即跟着切（不用等 refresh）
+    for (const p of $('#ovDayPlot').querySelectorAll('.pbar')) {
+      p.classList.toggle('sel', p.dataset.day === day);
+    }
   });
 
   $('#btnNewCat').onclick = () => openEdit(null);
